@@ -99,7 +99,7 @@ Los 46 archivos **no son homogéneos**, y eso es lo que justifica que exista una
 | Comillas y saltos de línea | 43 entrecomillados con `LF`; 3 sin comillas y con `CRLF` |
 | Formato de fecha | 43 archivos en `aaaa-mm-dd hh:mm:ss`; **3 en `dd/mm/aaaa h:mm`** |
 | Encabezado | `Año_de_nacimiento` aparece con 3 secuencias de bytes distintas, 2 corruptas |
-| Llave | **758 `viaje_id` se repiten** entre archivos: no sirve como llave |
+| Duplicados | **758 filas idénticas** repetidas dentro del mismo mes: mismo viaje, usuario y horas |
 
 Un hallazgo que simplificó la ingesta: se verificó byte por byte que **ninguna fila de datos
 contiene caracteres fuera de ASCII**. La `ñ` vive solo en el encabezado, que se descarta al leer.
@@ -125,8 +125,9 @@ agresiva.
 | RN-05 | Llave única `viaje_sk = anio-mes-viaje_id` |
 | RN-06 | Columnas de auditoría: archivo de origen y fecha de carga |
 | RN-07 | Los inválidos se marcan y se registran, no se eliminan |
+| RN-08 | Detecta duplicados exactos comparando la tupla completa del viaje |
 
-### Las nueve validaciones y lo que encontraron
+### Las diez validaciones y lo que encontraron
 
 | Columna | Incidencia | Registros | Por qué importa |
 |---|---|---:|---|
@@ -136,11 +137,18 @@ agresiva.
 | `anio_nacimiento` | Nulo | 11,005 | Dato faltante en el registro |
 | `edad_usuario` | Fuera de [10, 100] | 2,456 | Hay años de nacimiento como `199` o `2023` |
 | `duracion_min` | Mayor a 24 h | 44 | Bicicleta no devuelta, no un viaje |
+| `viaje_sk` | Registro duplicado exacto | 758 | La misma fila capturada dos veces en el origen |
 | `inicio_viaje` / `fin_viaje` | No parseable | 0 | Las dos variantes de formato quedaron cubiertas |
 | `origen_id` / `destino_id` | Estación nula | 0 | Sin estación no hay join con la dimensión |
 
 **Cómo se evita que la bandera y el log se contradigan:** las dos salen del mismo arreglo.
 `registro_valido` es `size(incidencias) == 0` y el log es el `explode` de ese mismo arreglo.
+
+**Sobre los 758 duplicados.** Aparecieron al correr el pipeline: la llave `viaje_sk` no resultó
+única, y la diferencia era exactamente 758. Al revisarlos resultaron ser filas idénticas —mismo
+viaje, mismo usuario, mismas horas— repetidas dentro del mismo mes. La copia no se borra: se marca
+inválida y se registra, igual que cualquier otra incidencia. Así `viaje_sk` sí es única **entre los
+registros válidos**, que son los únicos que llegan al esquema estrella.
 
 ### Las cinco estaciones fantasma
 

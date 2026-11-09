@@ -50,11 +50,16 @@ DUR_MIN_SEG   = 60          # menos de 1 minuto: falso retiro
 DUR_MAX_SEG   = 24 * 3600   # más de 24 h: bici no devuelta
 EDAD_MIN, EDAD_MAX = 10, 100
 
-# Resultado esperado del perfilado en pandas
-CTRL_TOTAL      = 17_468_665
-CTRL_VALIDOS    = 16_751_269
-CTRL_INCIDENCIAS = 722_915
-CTRL_VIAJE_ID_DUP = 758
+# Resultado esperado del perfilado en pandas sobre los CSV originales.
+CTRL_TOTAL = 17_468_665
+CTRL_DUPLICADOS = 758          # filas repetidas exactas que detecta RN-08
+
+# El perfilado se hizo ANTES de descubrir los duplicados, así que su conteo de válidos no
+# los descontaba. El número definitivo lo establece esta corrida, y tiene que caer dentro
+# de [CTRL_VALIDOS_SIN_DEDUP - 758, CTRL_VALIDOS_SIN_DEDUP]: las 758 copias o ya estaban
+# marcadas por otra regla, o se vuelven inválidas ahora.
+CTRL_VALIDOS_SIN_DEDUP = 16_751_269
+CTRL_INCIDENCIAS_6 = 722_915   # suma de las seis reglas del perfilado
 
 CTRL_POR_REGLA = {
     "Duracion menor a 60 segundos":            549_047,
@@ -63,8 +68,9 @@ CTRL_POR_REGLA = {
     "Anio de nacimiento nulo":                  11_005,
     "Edad fuera del rango [10,100]":             2_456,
     "Duracion mayor a 24 horas":                    44,
+    "Registro duplicado exacto":                   758,   # RN-08
 }
-assert sum(CTRL_POR_REGLA.values()) == CTRL_INCIDENCIAS
+assert sum(CTRL_POR_REGLA.values()) == CTRL_INCIDENCIAS_6 + CTRL_DUPLICADOS
 
 # Toda la capa Silver descansa en una premisa: un dato malo se convierte en NULL y se marca
 # como incidencia; NUNCA tumba el job. Eso exige desactivar el modo ANSI, porque con ANSI
@@ -89,7 +95,7 @@ print(f"Destino: {TBL_SILVER} + {TBL_LOG}")
 
 # COMMAND ----------
 
-from pyspark.sql import functions as F
+from pyspark.sql import functions as F, Window
 
 def a_timestamp(col):
     """Primero ISO, luego dd/MM/yyyy con y sin segundos. El primero que parsee, gana."""
@@ -144,7 +150,43 @@ derivado = (
     .withColumn("dia_semana",    (F.dayofweek("inicio_viaje") + 5) % 7)
     .withColumn("es_fin_semana", F.col("dia_semana").isin(5, 6))
     .withColumn("edad_usuario",  F.col("anio") - F.col("anio_nacimiento"))
+    # RN-05: la llave se calcula aquí porque la detección de duplicados la necesita
+    .withColumn("viaje_sk", F.concat_ws("-",
+        F.coalesce(F.col("anio").cast("string"), F.lit("XXXX")),
+        F.coalesce(F.lpad(F.col("mes").cast("string"), 2, "0"), F.lit("XX")),
+        F.coalesce(F.col("viaje_id").cast("string"), F.lit("SIN_ID")),
+    ))
 )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### RN-08 — Duplicados exactos
+# MAGIC
+# MAGIC El origen trae **758 registros repetidos**: la misma fila, dos veces. Mismo `viaje_id`,
+# MAGIC mismo usuario, misma hora de inicio y de fin. No es que el identificador se recicle entre
+# MAGIC meses — es el mismo viaje capturado dos veces dentro del mismo mes.
+# MAGIC
+# MAGIC Se detectan comparando la **tupla completa de negocio**, no solo el identificador: dos filas
+# MAGIC son la misma si coinciden en viaje, usuario, horas y estaciones. A la primera copia se le
+# MAGIC deja pasar; de la segunda en adelante se marcan como incidencia.
+# MAGIC
+# MAGIC Fiel a RN-07, **la copia no se borra**: se conserva con `registro_valido = false` y queda
+# MAGIC registrada en el log. Así `viaje_sk` sí es única entre los registros válidos, que es donde
+# MAGIC la necesita el esquema estrella.
+
+# COMMAND ----------
+
+# El orden dentro de la ventana es irrelevante porque las filas son idénticas; se fija uno
+# determinista solo para que la elección de "la copia buena" sea reproducible.
+ventana_dup = (Window
+               .partitionBy("viaje_id", "usuario_id", "inicio_viaje", "fin_viaje",
+                            "origen_id", "destino_id")
+               .orderBy("archivo_origen", "_orden"))
+
+derivado = (derivado
+            .withColumn("_orden", F.monotonically_increasing_id())
+            .withColumn("_copia", F.row_number().over(ventana_dup)))
 
 # COMMAND ----------
 
@@ -182,6 +224,8 @@ reglas = [
                "edad_usuario", f"Edad fuera del rango [{EDAD_MIN},{EDAD_MAX}]", F.col("edad_usuario")),
     incidencia(F.col("origen_id").isNull() | F.col("destino_id").isNull(), "origen_id/destino_id",
                "Estacion de origen o destino nula", F.col("origen_id")),
+    incidencia(F.col("_copia") > 1, "viaje_sk",
+               "Registro duplicado exacto", F.col("viaje_sk")),
 ]
 
 # array_compact deja fuera los NULL, así que el arreglo contiene SOLO las reglas incumplidas.
@@ -201,18 +245,14 @@ con_incidencias = derivado.withColumn("incidencias", F.array_compact(F.array(*re
 
 silver = (
     con_incidencias
-    .withColumn("registro_valido", F.size("incidencias") == 0)
-    .withColumn("viaje_sk", F.concat_ws("-",
-        F.coalesce(F.col("anio").cast("string"), F.lit("XXXX")),
-        F.coalesce(F.lpad(F.col("mes").cast("string"), 2, "0"), F.lit("XX")),
-        F.coalesce(F.col("viaje_id").cast("string"), F.lit("SIN_ID")),
-    ))
+    .withColumn("n_incidencias",   F.size("incidencias"))
+    .withColumn("registro_valido", F.col("n_incidencias") == 0)
     .select(
         "viaje_sk", "viaje_id", "usuario_id", "genero", "anio_nacimiento", "edad_usuario",
         "inicio_viaje", "fin_viaje", "duracion_min",
         "origen_id", "destino_id",
         "anio", "mes", "dia", "hora", "dia_semana", "es_fin_semana",
-        "registro_valido", "incidencias",
+        "n_incidencias", "registro_valido", "incidencias",
         "archivo_origen", "fecha_carga",
     )
 )
@@ -275,15 +315,18 @@ print(f"Escrito: {TBL_LOG}")
 n_total   = spark.table(TBL_SILVER).count()
 n_validos = spark.table(TBL_SILVER).filter("registro_valido").count()
 n_log     = spark.table(TBL_LOG).count()
-n_sk      = spark.table(TBL_SILVER).select("viaje_sk").distinct().count()
 n_vid     = spark.table(TBL_SILVER).select("viaje_id").distinct().count()
 
+# La propiedad que de verdad importa: la llave es única ENTRE LOS VÁLIDOS, que son los
+# únicos que llegan al esquema estrella. En Silver conviven las copias, por diseño.
+n_sk_validos = (spark.table(TBL_SILVER).filter("registro_valido")
+                .select("viaje_sk").distinct().count())
+
 filas = [
-    ("Filas totales",            n_total,            CTRL_TOTAL),
-    ("Registros validos",        n_validos,          CTRL_VALIDOS),
-    ("Incidencias en el log",    n_log,              CTRL_INCIDENCIAS),
-    ("viaje_id duplicados",      n_total - n_vid,    CTRL_VIAJE_ID_DUP),
-    ("viaje_sk unicos",          n_sk,               n_total),   # la llave debe ser única
+    ("Filas totales",            n_total,         CTRL_TOTAL),
+    ("Incidencias en el log",    n_log,           CTRL_INCIDENCIAS_6 + CTRL_DUPLICADOS),
+    ("viaje_id duplicados",      n_total - n_vid, CTRL_DUPLICADOS),
+    ("viaje_sk unico en validos", n_sk_validos,   n_validos),
 ]
 
 print(f"{'Concepto':<26}{'PySpark':>14}{'Esperado':>14}   Estado")
@@ -342,9 +385,9 @@ display(spark.sql(f"""
            'Debe ser 0'
     FROM {TBL_SILVER} WHERE registro_valido AND (edad_usuario < 10 OR edad_usuario > 100)
   UNION ALL
-    SELECT 'viaje_sk repetidos', COUNT(*) - COUNT(DISTINCT viaje_sk),
+    SELECT 'viaje_sk repetidos entre validos', COUNT(*) - COUNT(DISTINCT viaje_sk),
            'Debe ser 0: es la llave del hecho'
-    FROM {TBL_SILVER}
+    FROM {TBL_SILVER} WHERE registro_valido
 """))
 
 # COMMAND ----------
