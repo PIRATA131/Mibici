@@ -1,0 +1,17 @@
+# El repositorio se construye en Linux (Render). Todo lo que la imagen ejecuta o lee
+# tiene que guardarse con finales de línea LF: un Dockerfile con CRLF rompe el build.
+* text=auto eol=lf
+
+Dockerfile   text eol=lf
+*.sh         text eol=lf
+*.py         text eol=lf
+*.yaml       text eol=lf
+*.yml        text eol=lf
+*.md         text eol=lf
+*.html       text eol=lf
+*.csv        text eol=lf
+*.txt        text eol=lf
+
+*.joblib     binary
+*.parquet    binary
+*.png        binary

@@ -1,0 +1,35 @@
+# ---------------------------------------------------------------- datos
+# El repositorio NO lleva datos. Son 4.7 GB y además se descargan del portal
+# oficial de MiBici, que es la fuente citada en el README.
+Dataset/
+Dataset_Maestro/
+Upload_Databricks/
+
+# El artefacto del modelo lo genera el notebook 04 y se baja del Volume.
+api/datos/modelo_demanda.joblib
+
+# Excepción: la tabla de la línea base sí viaja en el repo. Son 1.9 MB y sin ella
+# el API no arranca, así que el proyecto no sería reproducible con un solo clone.
+!api/datos/baseline_estacion_dia_hora.csv
+!api/datos/dim_estacion.csv
+
+# ---------------------------------------------------------------- python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------- spark / databricks
+spark-warehouse/
+metastore_db/
+derby.log
+
+# ---------------------------------------------------------------- sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

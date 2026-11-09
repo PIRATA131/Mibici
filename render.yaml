@@ -1,0 +1,18 @@
+# Blueprint de Render. Con este archivo en la raíz del repo, Render crea el servicio
+# solo: New → Blueprint → elegir el repositorio.
+#
+# El plan gratuito duerme el servicio tras 15 minutos sin tráfico y tarda entre 30 y 60
+# segundos en despertar. Para la presentación: abrir la página unos minutos antes.
+services:
+  - type: web
+    name: mibici-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: .              # la imagen necesita api/ y web/, así que el contexto es la raíz
+    healthCheckPath: /salud
+    autoDeploy: true              # redespliega en cada push a la rama principal
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"

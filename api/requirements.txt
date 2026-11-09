@@ -1,0 +1,11 @@
+# Servicio
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+
+# Carga del artefacto del modelo entrenado en el notebook 04.
+# El API arranca sin ellas (responde con la línea base), pero sin ellas nunca
+# podría servir el modelo, que es el criterio 3 de la rúbrica.
+scikit-learn==1.6.0
+joblib==1.4.2
+numpy==2.2.1
