@@ -253,6 +253,41 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Cuánto margen había realmente
+# MAGIC
+# MAGIC Un RMSE de 1.88 contra una línea base de 1.91 parece una mejora pobre. Pero medir la mejora
+# MAGIC contra cero es la comparación equivocada, porque **cero error es imposible**.
+# MAGIC
+# MAGIC La demanda de bicicletas es un conteo. Si una estación recibe en promedio λ viajes en una
+# MAGIC hora, el número exacto varía por azar aunque conozcas λ con precisión perfecta. Para un
+# MAGIC proceso de Poisson —el modelo estándar de conteos de eventos independientes— la varianza
+# MAGIC es igual a la media, así que el error cuadrático medio mínimo alcanzable es **√λ**.
+# MAGIC
+# MAGIC Ese es el piso. La pregunta correcta no es "¿cuánto baja el RMSE?" sino **"¿qué fracción
+# MAGIC del margen alcanzable captura el modelo?"**
+
+# COMMAND ----------
+
+piso = {o: float(np.sqrt(prueba[o].mean())) for o in OBJETIVOS}
+
+print(f"{'objetivo':<10}{'piso Poisson':>14}{'linea base':>12}{'modelo':>10}"
+      f"{'margen':>9}{'capturado':>11}")
+print("-" * 68)
+for o in OBJETIVOS:
+    b, m, p = base_metricas[o]["rmse"], metricas[o]["rmse"], piso[o]
+    margen = b - p                       # lo máximo que se le podía ganar a la línea base
+    ganado = b - m                       # lo que efectivamente se le ganó
+    pct = 100 * ganado / margen if margen > 0 else float("nan")
+    print(f"{o:<10}{p:>14.3f}{b:>12.3f}{m:>10.3f}{margen:>9.3f}{pct:>10.1f}%")
+
+print(f"""
+Lectura: la línea base ya está a {base_metricas['salidas']['rmse'] - piso['salidas']:.2f} bicicletas
+del piso teórico. El modelo cierra una fracción de esa distancia, no de la distancia a cero.
+El resto es ruido irreducible: dos martes a las 8 de la mañana en la misma estación no
+registran el mismo número de viajes ni con la mejor predicción posible.""")
+
+# COMMAND ----------
+
 # MAGIC ### Dónde se equivoca
 # MAGIC
 # MAGIC El promedio esconde lo importante. Lo que interesa es si falla justo en las horas pico,
