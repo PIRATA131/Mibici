@@ -414,6 +414,8 @@ display(spark.sql(f"""
 
 silver.unpersist()
 
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ---
 # MAGIC ### Siguiente paso
