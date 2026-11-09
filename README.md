@@ -35,24 +35,20 @@ reaccionando cuando el problema ya ocurrió. Este proyecto responde la pregunta 
 
 ```mermaid
 flowchart LR
-  subgraph F["Fuente"]
-    A["46 CSV mensuales<br/>datos abiertos MiBici<br/>ene-2023 a oct-2026"]
-    B["Catálogo de<br/>estaciones"]
-  end
-  subgraph D["Databricks · PySpark"]
-    BR["<b>Bronze</b><br/>crudo, todo STRING<br/>17,468,665 filas"]
-    SI["<b>Silver</b><br/>tipado, reglas de negocio<br/>+ log de errores"]
-    GO["<b>Gold</b><br/>esquema estrella<br/>+ panel de demanda"]
-    ML["<b>Modelo</b><br/>gradient boosting<br/>vs. línea base"]
-  end
-  subgraph S["Servicio"]
-    API["<b>API REST</b><br/>FastAPI + Docker<br/>OpenAPI + validación"]
-    WEB["<b>Página web</b><br/>mapa de déficit"]
-  end
+  A["46 CSV mensuales<br/>datos abiertos MiBici<br/>ene-2023 a oct-2026"]
+  B["Catalogo de estaciones"]
+  BR["Bronze<br/>crudo, todo STRING<br/>17.468.665 filas"]
+  SI["Silver<br/>tipado y reglas de negocio<br/>mas log de errores"]
+  GO["Gold<br/>esquema estrella<br/>mas panel de demanda"]
+  ML["Modelo<br/>gradient boosting<br/>contra linea base"]
+  API["API REST<br/>FastAPI en Docker<br/>OpenAPI y validacion"]
+  WEB["Pagina web<br/>mapa de deficit"]
   A --> BR
   B --> BR
-  BR --> SI --> GO --> ML
-  ML -->|"artefacto<br/>.joblib"| API
+  BR --> SI
+  SI --> GO
+  GO --> ML
+  ML -->|"artefacto joblib"| API
   WEB -->|"HTTP"| API
 ```
 
@@ -147,9 +143,8 @@ lugar de descartar esos viajes, para que **ningún hecho quede huérfano de dime
 
 ```mermaid
 erDiagram
-  FACT_VIAJES }o--|| DIM_ESTACION : "origen"
-  FACT_VIAJES }o--|| DIM_ESTACION : "destino"
-  FACT_VIAJES }o--|| DIM_TIEMPO : "ocurre en"
+  DIM_ESTACION ||--o{ FACT_VIAJES : "estacion"
+  DIM_TIEMPO ||--o{ FACT_VIAJES : "hora"
   FACT_VIAJES {
     string viaje_sk PK
     int estacion_origen_id FK
@@ -176,6 +171,8 @@ erDiagram
     boolean es_festivo
   }
 ```
+
+`FACT_VIAJES` apunta dos veces a `DIM_ESTACION`, por el origen y por el destino del viaje.
 
 Más una tabla agregada, `gold_agg_demanda_estacion_hora`, que es la que entrena el modelo: una
 fila por estación y hora de servicio, con salidas, llegadas, déficit y variables de rezago.
