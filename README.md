@@ -326,6 +326,16 @@ uvicorn app.main:app --reload
 - Mapa: http://localhost:8000/app/
 - Documentación del API: http://localhost:8000/docs
 
+Las pruebas del servicio corren sin levantar servidor:
+
+```bash
+cd api
+python pruebas_api.py
+```
+
+Cubren las tres cosas que importan del endpoint: que prediga, que valide las entradas y que
+cada error salga con su código correcto.
+
 ### Con Docker
 
 ```bash
@@ -359,12 +369,14 @@ perder ni duplicar uno.
 │   │   ├── predictor.py           Baseline y modelo entrenado
 │   │   └── catalogo.py            Catálogo de estaciones en memoria
 │   ├── datos/                     Tabla baseline y artefacto del modelo
+│   ├── pruebas_api.py             Pruebas del servicio
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── web/
 │   └── index.html                 Mapa de déficit
 ├── docs/
 │   └── contrato_api.md            Contrato del servicio
+├── render.yaml                    Despliegue del contenedor en Render
 └── README.md
 ```
 
