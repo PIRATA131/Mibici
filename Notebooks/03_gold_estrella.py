@@ -220,41 +220,63 @@ print(f"gold_dim_tiempo: {spark.table(TBL_DIM_TMP).count():,} horas")
 
 f = spark.table(TBL_FACT)
 
-salidas = (f.groupBy(F.col("estacion_origen_id").alias("estacion_id"), "tiempo_sk")
+# Se agrega por FECHA y HORA, no por timestamp. Unir dos timestamps construidos de maneras
+# distintas —uno con date_trunc y otro con aritmética de intervalos— es frágil: basta una
+# diferencia de tipo o de zona horaria para que las filas dejen de casar en silencio.
+# Una fecha y un entero no tienen ese problema.
+salidas = (f.groupBy(F.col("estacion_origen_id").alias("estacion_id"),
+                     F.to_date("inicio_viaje").alias("fecha"),
+                     F.col("hora"))
             .agg(F.count("*").alias("salidas"),
                  F.round(F.avg("duracion_min"), 2).alias("duracion_media_salida")))
 
-llegadas = (f.groupBy(F.col("estacion_destino_id").alias("estacion_id"), "tiempo_sk")
+llegadas = (f.groupBy(F.col("estacion_destino_id").alias("estacion_id"),
+                      F.to_date("inicio_viaje").alias("fecha"),
+                      F.col("hora"))
              .agg(F.count("*").alias("llegadas")))
 
-observado = salidas.join(llegadas, ["estacion_id", "tiempo_sk"], "outer")
+LLAVE = ["estacion_id", "fecha", "hora"]
+observado = salidas.join(llegadas, LLAVE, "outer")
 
-# vida útil de cada estación
+# Vida útil de cada estación: del primer al último día con movimiento.
 vida = (observado.groupBy("estacion_id")
-        .agg(F.min(F.to_date("tiempo_sk")).alias("primer_dia"),
-             F.max(F.to_date("tiempo_sk")).alias("ultimo_dia")))
+        .agg(F.min("fecha").alias("primer_dia"),
+             F.max("fecha").alias("ultimo_dia")))
 
-# panel denso: cada estación x cada hora de servicio dentro de su vida útil
+# Panel denso: cada estación x cada día de su vida útil x cada hora de servicio.
 panel = (vida
          .withColumn("fecha", F.explode(F.expr("sequence(primer_dia, ultimo_dia, interval 1 day)")))
          .withColumn("hora", F.explode(F.array(*[F.lit(h) for h in range(HORA_MIN, HORA_MAX + 1)])))
-         .withColumn("tiempo_sk", F.expr("fecha + make_interval(0,0,0,0,hora,0,0)"))
-         .select("estacion_id", "tiempo_sk"))
+         .select(*LLAVE))
 
-agg = (panel.join(observado, ["estacion_id", "tiempo_sk"], "left")
+agg = (panel.join(observado, LLAVE, "left")
        .na.fill({"salidas": 0, "llegadas": 0})
+       # dim_tiempo también se une por fecha y hora, por la misma razón
        .join(spark.table(TBL_DIM_TMP).select(
-                 "tiempo_sk", "fecha", "anio", "mes", "dia", "hora",
+                 "fecha", "hora", "anio", "mes", "dia",
                  "dia_semana", "es_fin_semana", "es_festivo", "semana_anio"),
-             "tiempo_sk", "left")
+             ["fecha", "hora"], "left")
        .join(spark.table(TBL_DIM_EST).select(
                  "estacion_id", "clave_estacion", "municipio", "capacidad_anclajes"),
              "estacion_id", "left")
+       # El timestamp se deriva al final, solo como columna de salida: ya no se une por él.
+       .withColumn("tiempo_sk",
+                   F.expr("make_timestamp(year(fecha), month(fecha), day(fecha), hora, 0, 0)"))
        .withColumn("balance", F.col("llegadas") - F.col("salidas"))
        .withColumn("deficit_bicis", F.greatest(F.lit(0), -F.col("balance")))
        .withColumn("saturacion",
                    F.when(F.col("capacidad_anclajes") > 0,
                           F.round(F.col("deficit_bicis") / F.col("capacidad_anclajes"), 4))))
+
+# Comprobación temprana: el join tiene que conservar todos los viajes en horario de servicio.
+# Si falla aquí, falla antes de escribir nada y antes de calcular los rezagos.
+en_servicio = f.filter(F.col("hora").between(HORA_MIN, HORA_MAX)).count()
+suma_join = agg.agg(F.sum("salidas")).first()[0]
+print(f"Viajes en horario de servicio: {en_servicio:,}")
+print(f"Suma de salidas tras el join : {suma_join:,}")
+assert en_servicio == suma_join, (
+    f"El join perdió {en_servicio - suma_join:,} viajes: revisa las llaves")
+print("El join conserva todos los viajes.")
 
 # COMMAND ----------
 
@@ -269,7 +291,7 @@ agg = (panel.join(observado, ["estacion_id", "tiempo_sk"], "left")
 # COMMAND ----------
 
 v = (Window.partitionBy("estacion_id", "dia_semana", "hora")
-     .orderBy(F.col("fecha").cast("long"))
+     .orderBy(F.col("fecha").cast("timestamp").cast("long"))
      .rangeBetween(-4 * 7 * 86400, -7 * 86400))     # de 4 semanas atrás a 1 semana atrás
 
 agg_final = (agg
