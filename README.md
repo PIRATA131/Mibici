@@ -84,8 +84,8 @@ Instituto de Movilidad y Transporte de Jalisco. Un CSV por mes más el catálogo
 |---|---|
 | Periodo | enero 2023 – octubre 2026 (46 meses) |
 | Viajes | **17,468,665** |
-| Válidos tras las reglas | 16,751,269 (95.89 %) |
-| Incidencias registradas | 722,915 |
+| Válidos tras las reglas | 16,750,528 (95.89 %) |
+| Incidencias registradas | 723,673 |
 | Estaciones | 475 (470 del catálogo + 5 sin ficha) |
 | Tamaño crudo | 1.39 GB (302 MB comprimido) |
 
@@ -145,7 +145,8 @@ agresiva.
 `registro_valido` es `size(incidencias) == 0` y el log es el `explode` de ese mismo arreglo.
 
 **Sobre los 758 duplicados.** Aparecieron al correr el pipeline: la llave `viaje_sk` no resultó
-única, y la diferencia era exactamente 758. Al revisarlos resultaron ser filas idénticas —mismo
+única, y la diferencia era exactamente 758. De esas copias, **741 eran por lo demás válidas** y las
+descarta RN-08; las otras 17 ya estaban marcadas por alguna de las seis reglas anteriores. Al revisarlos resultaron ser filas idénticas —mismo
 viaje, mismo usuario, mismas horas— repetidas dentro del mismo mes. La copia no se borra: se marca
 inválida y se registra, igual que cualquier otra incidencia. Así `viaje_sk` sí es única **entre los
 registros válidos**, que son los únicos que llegan al esquema estrella.
