@@ -139,9 +139,20 @@ fact = (spark.table(TBL_SILVER)
 fact.write.mode("overwrite").option("overwriteSchema", "true") \
     .partitionBy("anio").saveAsTable(TBL_FACT)
 
+# Los hechos tienen que ser EXACTAMENTE los válidos de Silver: ni uno más, ni uno menos.
+# Se compara contra la tabla, no contra un número escrito a mano, para que la aserción
+# siga siendo cierta si una regla de Silver cambia.
+n_validos_silver = spark.table(TBL_SILVER).filter("registro_valido").count()
 n_fact = spark.table(TBL_FACT).count()
-print(f"gold_fact_viajes: {n_fact:,} viajes válidos")
-assert n_fact == 16_751_269, f"Se esperaban 16,751,269 hechos, hay {n_fact:,}"
+print(f"gold_fact_viajes : {n_fact:,} viajes")
+print(f"validos en Silver: {n_validos_silver:,}")
+assert n_fact == n_validos_silver, (
+    f"Gold tiene {n_fact:,} hechos pero Silver tiene {n_validos_silver:,} válidos")
+
+# viaje_sk es la llave del hecho: tiene que ser única aquí sin excepción.
+n_sk = spark.table(TBL_FACT).select("viaje_sk").distinct().count()
+assert n_sk == n_fact, f"viaje_sk repetido en los hechos: {n_fact - n_sk:,} colisiones"
+print(f"viaje_sk unico   : {n_sk:,}  OK")
 
 # integridad referencial: ningún hecho puede apuntar a una estación que no exista
 huerfanos = spark.sql(f"""
