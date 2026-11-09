@@ -58,9 +58,14 @@ RUTA_ESTACION = f"/Volumes/{CATALOG}/{SCHEMA}/{VOLUME}/bronze/nomenclatura_2026_
 TBL_VIAJES   = f"{CATALOG}.{SCHEMA}.bronze_viajes"
 TBL_ESTACION = f"{CATALOG}.{SCHEMA}.bronze_estaciones"
 
-spark.sql(f"CREATE CATALOG IF NOT EXISTS {CATALOG}")
-spark.sql(f"CREATE SCHEMA  IF NOT EXISTS {CATALOG}.{SCHEMA}")
-spark.sql(f"CREATE VOLUME  IF NOT EXISTS {CATALOG}.{SCHEMA}.{VOLUME}")
+# El catálogo `workspace` ya existe en Databricks Free Edition y la edición gratuita no
+# concede permiso para crear catálogos, así que no se intenta. El esquema y el volumen sí
+# se crean aquí (idempotente: si ya existen, no pasa nada).
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{SCHEMA}.{VOLUME}")
+
+# Silver y Gold dependen de que un dato malo se vuelva NULL en vez de lanzar excepción.
+spark.sql("SET spark.sql.ansi.enabled = false")
 
 print(f"Destino: {TBL_VIAJES}")
 print(f"Fuente : {RUTA_VIAJES}")
