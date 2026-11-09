@@ -8,6 +8,18 @@ Especialidad en Ciencia de Datos · Universidad Panamericana, campus Guadalajara
 Profesor: Dr. Ramón Alejandro Briseño Martínez
 Equipo: **César Roberto Murillo Figueroa** y **Andrés Muñoz Rubalcava**
 
+### En vivo
+
+| | |
+|---|---|
+| **Mapa de rebalanceo** | https://mibici-api-v8k6.onrender.com/app/ |
+| **Documentación del API** (OpenAPI) | https://mibici-api-v8k6.onrender.com/docs |
+| **Estado del servicio** | https://mibici-api-v8k6.onrender.com/salud |
+
+> El servicio corre en el plan gratuito de Render, que lo duerme tras 15 minutos sin tráfico.
+> La primera visita después de un rato tarda entre 30 y 60 segundos en responder; las siguientes
+> son inmediatas.
+
 ---
 
 ## El problema
@@ -339,6 +351,13 @@ cada error salga con su código correcto.
 docker build -t mibici-api -f api/Dockerfile .
 docker run -p 8000:8000 mibici-api
 ```
+
+### En Render
+
+El repositorio trae [`render.yaml`](render.yaml), así que el despliegue es declarativo: en Render se
+elige **New → Blueprint**, se conecta este repositorio y la plataforma construye el `Dockerfile`,
+publica el servicio y lo vuelve a desplegar en cada push a `main`. No hace falta Docker en la
+máquina local.
 
 ### Los notebooks
 
