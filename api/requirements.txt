@@ -4,8 +4,9 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.4
 
 # Carga del artefacto del modelo entrenado en el notebook 04.
-# El API arranca sin ellas (responde con la línea base), pero sin ellas nunca
-# podría servir el modelo, que es el criterio 3 de la rúbrica.
-scikit-learn==1.6.0
+# La version de scikit-learn tiene que ser EXACTAMENTE la que uso Databricks al
+# entrenar (1.7.2): un pickle de sklearn no es portable entre versiones mayores y
+# el contenedor fallaria al cargar el modelo con cualquier otra.
+scikit-learn==1.7.2
 joblib==1.4.2
 numpy==2.2.1

@@ -5,8 +5,8 @@ Dataset/
 Dataset_Maestro/
 Upload_Databricks/
 
-# El artefacto del modelo lo genera el notebook 04 y se baja del Volume.
-api/datos/modelo_demanda.joblib
+# El artefacto del modelo SÍ viaja en el repo (1.9 MB): Render construye la imagen
+# desde aquí, así que sin él el servicio arrancaría siempre en modo degradado.
 
 # Excepción: la tabla de la línea base sí viaja en el repo. Son 1.9 MB y sin ella
 # el API no arranca, así que el proyecto no sería reproducible con un solo clone.
