@@ -15,6 +15,7 @@ Equipo: **César Roberto Murillo Figueroa** y **Andrés Muñoz Rubalcava**
 | **Mapa de rebalanceo** | https://mibici-api-v8k6.onrender.com/app/ |
 | **Documentación del API** (OpenAPI) | https://mibici-api-v8k6.onrender.com/docs |
 | **Estado del servicio** | https://mibici-api-v8k6.onrender.com/salud |
+| **Presentación** | [`Rebalanceo de MiBici.pptx`](Rebalanceo%20de%20MiBici.pptx) — 14 diapositivas, con el guion en las notas del orador |
 
 > El servicio corre en el plan gratuito de Render, que lo duerme tras 15 minutos sin tráfico.
 > La primera visita después de un rato tarda entre 30 y 60 segundos en responder; las siguientes
@@ -430,6 +431,7 @@ perder ni duplicar uno.
 │   └── index.html                 Mapa de déficit
 ├── docs/
 │   └── contrato_api.md            Contrato del servicio
+├── Rebalanceo de MiBici.pptx      Diapositivas de la exposición
 ├── render.yaml                    Despliegue del contenedor en Render
 └── README.md
 ```

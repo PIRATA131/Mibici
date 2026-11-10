@@ -1,0 +1,55 @@
+{
+ "v": 4,
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-11-09T22:00:00Z"
+ },
+ "lists": "css",
+ "title": "Rebalanceo de MiBici",
+ "order": [
+  "portada",
+  "mapa",
+  "estacion",
+  "datos",
+  "sucios",
+  "medallion",
+  "reglas",
+  "duplicados",
+  "silencioso",
+  "modelo",
+  "piso",
+  "curva",
+  "produccion",
+  "cierre"
+ ],
+ "cover": "portada",
+ "sections": {
+  "s1": {
+   "description": "El problema: estaciones que se vacían todos los días a la misma hora",
+   "start": "portada"
+  },
+  "s2": {
+   "description": "Los datos y el pipeline Medallion que los limpia",
+   "start": "datos"
+  },
+  "s3": {
+   "description": "Lo que el pipeline encontró y nadie habría visto a simple vista",
+   "start": "duplicados"
+  },
+  "s4": {
+   "description": "El modelo, su resultado honesto y el servicio en producción",
+   "start": "modelo"
+  }
+ },
+ "faces": {
+  "space-grotesk": {
+   "family": "Space Grotesk",
+   "href": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
+  },
+  "inter": {
+   "family": "Inter",
+   "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+  }
+ },
+ "designSystems": []
+}
