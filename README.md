@@ -144,12 +144,13 @@ agresiva.
 **Cómo se evita que la bandera y el log se contradigan:** las dos salen del mismo arreglo.
 `registro_valido` es `size(incidencias) == 0` y el log es el `explode` de ese mismo arreglo.
 
-**Sobre los 758 duplicados.** Aparecieron al correr el pipeline: la llave `viaje_sk` no resultó
-única, y la diferencia era exactamente 758. De esas copias, **741 eran por lo demás válidas** y las
-descarta RN-08; las otras 17 ya estaban marcadas por alguna de las seis reglas anteriores. Al revisarlos resultaron ser filas idénticas —mismo
-viaje, mismo usuario, mismas horas— repetidas dentro del mismo mes. La copia no se borra: se marca
-inválida y se registra, igual que cualquier otra incidencia. Así `viaje_sk` sí es única **entre los
-registros válidos**, que son los únicos que llegan al esquema estrella.
+**Sobre los 758 duplicados.** No los encontró el perfilado: los encontró el pipeline. La llave
+`viaje_sk` no resultó única y la diferencia era exactamente 758. Al revisarlas resultaron ser filas
+idénticas —mismo viaje, mismo usuario, mismas horas— repetidas dentro del mismo mes. De esas copias,
+**741 eran por lo demás válidas** y las descarta RN-08; las otras 17 ya estaban marcadas por alguna
+de las seis reglas anteriores. La copia no se borra: se marca inválida y se registra, igual que
+cualquier otra incidencia. Así `viaje_sk` sí es única **entre los registros válidos**, que son los
+únicos que llegan al esquema estrella.
 
 ### Las cinco estaciones fantasma
 
@@ -224,6 +225,34 @@ existencia, y medirlo es parte del trabajo.
 **Partición temporal, no aleatoria.** Se entrena con datos hasta el 31 de agosto de 2026 y se
 evalúa con septiembre y octubre. Una partición aleatoria dejaría filtrarse el lunes siguiente al
 entrenamiento y daría una métrica inflada que no se sostiene en producción.
+
+### Los resultados, y por qué el margen era estrecho
+
+Partición temporal: entrena con 4,791,477 filas hasta el 31 de agosto de 2026, evalúa con las
+542,431 de septiembre y octubre.
+
+| Objetivo | Línea base | Modelo | Mejora |
+|---|---|---|---|
+| salidas | RMSE 1.911 | **1.883** | +1.5 % |
+| llegadas | RMSE 1.919 | **1.894** | +1.3 % |
+
+**Un 1.5 % parece poco, y lo es — pero la comparación contra cero es la equivocada.** La demanda de
+bicicletas es un conteo: aunque conocieras con precisión perfecta la tasa λ de una estación a una
+hora, el número exacto variaría por azar. En un proceso de Poisson la varianza iguala a la media, así
+que el error mínimo alcanzable es `√λ`. Con la demanda observada, ese piso es **1.401 bicicletas**.
+
+| Objetivo | Piso teórico | Línea base | Modelo | Margen disponible | Capturado |
+|---|---|---|---|---|---|
+| salidas | 1.401 | 1.911 | 1.883 | 0.510 | **5.5 %** |
+| llegadas | 1.401 | 1.919 | 1.894 | 0.518 | **4.7 %** |
+
+La lectura honesta: **el promedio histórico ya está a medio bici del límite de lo predecible**, y el
+gradient boosting cierra un 5 % de esa distancia. El resto es ruido irreducible, no falta de modelo.
+
+El desglose por hora lo confirma y contradice la intuición: la mayor mejora está en el pico matutino
+(3.0 % a las 8 h) y la menor justo en el pico de la tarde (0.8 % a las 18 h), que es cuando más se
+necesitaría. Por eso el API **declara siempre qué está respondiendo**: si un día el modelo deja de
+aportar, cambiar a la línea base es una decisión defendible, no una derrota.
 
 ### Por qué scikit-learn y no Spark MLlib
 
