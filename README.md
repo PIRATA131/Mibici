@@ -5,7 +5,9 @@ cuántas habría que trasladar para que la estación no se quede sin servicio.
 
 **Proyecto final** — Aprendizaje Automático para Grandes Volúmenes de Datos
 Especialidad en Ciencia de Datos · Universidad Panamericana, campus Guadalajara
+
 Profesor: Dr. Ramón Alejandro Briseño Martínez
+
 Equipo: **César Roberto Murillo Figueroa** y **Andrés Muñoz Rubalcava**
 
 ### En vivo
