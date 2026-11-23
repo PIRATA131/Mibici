@@ -1,36 +1,35 @@
 name: API en línea
 
-# El plan gratuito de Render duerme el servicio tras 15 minutos sin tráfico y
-# tarda entre 30 y 60 segundos en despertar. Este flujo lo consulta cada cinco
-# minutos para que siempre responda al instante.
+# El plan gratuito de Render duerme el servicio tras 15 minutos sin trafico y tarda
+# entre 30 y 60 segundos en despertar. Este flujo lo consulta para que responda al
+# instante, y de paso hace de monitor: no se conforma con un 200, comprueba que el
+# artefacto del modelo este cargado y pide una prediccion real. Si el API cayera en
+# modo degradado, esta ejecucion se pondria en rojo y la insignia del README lo diria.
 #
-# De paso hace de monitor: no solo comprueba que responda 200, sino que el
-# artefacto del modelo este cargado. Si el API cayera en modo degradado, esta
-# ejecucion se pondria en rojo y la insignia del README lo mostraria.
+# Sobre la cadencia: las ejecuciones programadas de GitHub son "mejor esfuerzo" y se
+# retrasan o se saltan cuando la plataforma esta cargada, mas aun con intervalos muy
+# cortos. Por eso cada ejecucion no consulta una sola vez: se queda despierta un rato
+# consultando cada pocos minutos. Asi, aunque GitHub se salte un disparo, la ventana
+# sin trafico no llega a los 15 minutos que Render necesita para dormir el servicio.
 
 on:
   schedule:
-    # Cada cinco minutos. GitHub puede retrasar las ejecuciones programadas
-    # cuando hay mucha carga, por eso el intervalo es mas corto que los 15
-    # minutos de inactividad que Render tolera.
-    - cron: "*/5 * * * *"
+    - cron: "*/10 * * * *"
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
-
-concurrency:
-  group: mantener-vivo
-  cancel-in-progress: false
 
 env:
   API: https://mibici-api-v8k6.onrender.com
 
 jobs:
   consultar:
-    name: Consultar /salud
+    name: Consultar y vigilar
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - name: Despertar y verificar el servicio
         run: |
@@ -42,19 +41,21 @@ jobs:
           fin=$(date +%s%3N)
           ms=$((fin - inicio))
 
-          echo "### API en línea" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| campo | valor |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| endpoint | \`$API/salud\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| código | $codigo |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| latencia | ${ms} ms |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| consultado | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat respuesta.json >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### API en línea"
+            echo
+            echo "| campo | valor |"
+            echo "|---|---|"
+            echo "| endpoint | \`$API/salud\` |"
+            echo "| código | $codigo |"
+            echo "| latencia | ${ms} ms |"
+            echo "| consultado | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |"
+            echo
+            echo '```json'
+            cat respuesta.json
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
           echo "HTTP $codigo en ${ms} ms"
           cat respuesta.json
@@ -79,8 +80,8 @@ jobs:
 
       - name: Comprobar que el modelo predice de verdad
         run: |
-          # Una prediccion real: si el artefacto estuviera corrupto, /salud
-          # podria pasar y esta llamada no.
+          # Una prediccion real: si el artefacto estuviera corrupto, /salud podria
+          # pasar y esta llamada no.
           codigo=$(curl --silent --show-error --max-time 60 \
                         --header "Content-Type: application/json" \
                         --data '{"estacion_id":194,"fecha_hora":"2026-11-27T18:00:00"}' \
@@ -92,3 +93,16 @@ jobs:
           echo
           test "$codigo" = "200"
           grep -q '"salidas_estimadas"' prediccion.json
+
+      - name: Mantener el servicio despierto el resto de la ventana
+        # Dos consultas mas, espaciadas, para cubrir los diez minutos hasta el
+        # siguiente disparo aunque GitHub lo retrase.
+        run: |
+          for minuto in 4 8; do
+            sleep 240
+            codigo=$(curl --silent --max-time 60 --output /dev/null \
+                          --write-out "%{http_code}" "$API/salud")
+            echo "minuto +${minuto}: HTTP $codigo"
+            # Aqui no se falla la ejecucion: la verificacion seria ya paso en los
+            # pasos anteriores y este paso solo existe para que no se duerma.
+          done

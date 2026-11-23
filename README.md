@@ -53,6 +53,12 @@ pide una predicción real. El API responde 200 igual cuando perdió el artefacto
 línea base — una degradación silenciosa que antes nadie habría notado. Si eso pasa, la insignia se
 pone roja.
 
+> **Lo que esto no garantiza.** Las ejecuciones programadas de GitHub son *mejor esfuerzo*: se
+> retrasan o se saltan cuando la plataforma está cargada, y más con intervalos cortos. Por eso cada
+> ejecución no consulta una sola vez, sino que se queda despierta unos minutos consultando de nuevo,
+> para que un disparo perdido no abra una ventana de 15 minutos sin tráfico. Aun así, la única
+> garantía real es abrir la página un par de minutos antes de necesitarla.
+
 > **La página lo enseña sola.** En la esquina superior derecha de la aplicación hay un panel que
 > muestra la ruta, el código HTTP, la latencia y hace cuánto se consultó. Al desplegarlo se ve la
 > petición y la respuesta tal cual viajaron, más la bitácora de las últimas llamadas. Un mapa
