@@ -1,7 +1,12 @@
-# MiBici · Predicción de demanda y rebalanceo de estaciones
+# MiBici · Predicción de demanda y disponibilidad de estaciones
 
-Predice cuántas bicicletas van a salir y llegar a cada estación de MiBici en una hora dada, y
-cuántas habría que trasladar para que la estación no se quede sin servicio.
+[![API en línea](https://github.com/PIRATA131/Mibici/actions/workflows/mantener-vivo.yml/badge.svg)](https://github.com/PIRATA131/Mibici/actions/workflows/mantener-vivo.yml)
+
+Dos modelos sobre 17.4 millones de viajes, servidos por un API público:
+
+- **Para el operador** — cuántas bicicletas van a salir y llegar a cada estación en una hora dada,
+  y cuántas habría que trasladar para que no se quede sin servicio.
+- **Para el usuario** — *«voy a esta estación el viernes a las 6, ¿va a haber bicicleta?»*
 
 **Proyecto final** — Aprendizaje Automático para Grandes Volúmenes de Datos
 Especialidad en Ciencia de Datos · Universidad Panamericana, campus Guadalajara
@@ -10,17 +15,48 @@ Profesor: Dr. Ramón Alejandro Briseño Martínez
 
 Equipo: **César Roberto Murillo Figueroa** y **Andrés Muñoz Rubalcava**
 
-### En vivo
+---
+
+## En vivo
 
 | | |
 |---|---|
-| **Mapa de rebalanceo** | https://mibici-api-v8k6.onrender.com/app/ |
+| **Aplicación web** | https://mibici-api-v8k6.onrender.com/app/ |
 | **Documentación del API** (OpenAPI) | https://mibici-api-v8k6.onrender.com/docs |
 | **Estado del servicio** | https://mibici-api-v8k6.onrender.com/salud |
 
-> El servicio corre en el plan gratuito de Render, que lo duerme tras 15 minutos sin tráfico.
-> La primera visita después de un rato tarda entre 30 y 60 segundos en responder; las siguientes
-> son inmediatas.
+### Compruébelo sin salir de la terminal
+
+```bash
+curl -s https://mibici-api-v8k6.onrender.com/salud
+```
+
+```bash
+curl -s -X POST https://mibici-api-v8k6.onrender.com/disponibilidad \
+  -H "Content-Type: application/json" \
+  -d '{"estacion_id":194,"dia_semana":4,"hora":18}'
+```
+
+`/salud` devuelve `servidor_hora` en UTC: sirve para confirmar que la respuesta se generó en ese
+momento y no salió de una caché.
+
+### Por qué la insignia de arriba importa
+
+Render duerme el servicio en su plan gratuito tras 15 minutos sin tráfico, y despertarlo tardaba
+**27 segundos** medidos. Un flujo de GitHub Actions
+([`.github/workflows/mantener-vivo.yml`](.github/workflows/mantener-vivo.yml)) lo consulta cada
+cinco minutos, así que la primera visita ya no espera.
+
+Ese mismo flujo hace de monitor, y por eso la insignia es información y no adorno. No se conforma
+con un 200: comprueba que `/salud` declare `estado: ok` **y** `modelo_cargado: true`, y después
+pide una predicción real. El API responde 200 igual cuando perdió el artefacto y está sirviendo la
+línea base — una degradación silenciosa que antes nadie habría notado. Si eso pasa, la insignia se
+pone roja.
+
+> **La página lo enseña sola.** En la esquina superior derecha de la aplicación hay un panel que
+> muestra la ruta, el código HTTP, la latencia y hace cuánto se consultó. Al desplegarlo se ve la
+> petición y la respuesta tal cual viajaron, más la bitácora de las últimas llamadas. Un mapa
+> bonito es indistinguible de uno con los datos incrustados en el HTML; con ese panel abierto, no.
 
 ---
 
@@ -54,26 +90,33 @@ flowchart LR
   BR["Bronze<br/>crudo, todo STRING<br/>17.468.665 filas"]
   SI["Silver<br/>tipado y reglas de negocio<br/>mas log de errores"]
   GO["Gold<br/>esquema estrella<br/>mas panel de demanda"]
-  ML["Modelo<br/>gradient boosting<br/>contra linea base"]
+  OC["Gold<br/>ocupacion reconstruida<br/>por balance de flujos"]
+  ML["Modelo de demanda<br/>regresion<br/>contra linea base"]
+  MD["Modelo de disponibilidad<br/>regresion mas clasificacion<br/>contra linea base"]
   API["API REST<br/>FastAPI en Docker<br/>OpenAPI y validacion"]
-  WEB["Pagina web<br/>mapa de deficit"]
+  WEB["Pagina web<br/>mapa y consulta puntual"]
   A --> BR
   B --> BR
   BR --> SI
   SI --> GO
   GO --> ML
+  GO --> OC
+  OC --> MD
   ML -->|"artefacto joblib"| API
+  MD -->|"artefacto joblib"| API
   WEB -->|"HTTP"| API
 ```
 
 | Capa | Qué hace | Dónde está |
 |---|---|---|
 | **Bronze** | Ingesta cruda. Nada se castea, nada se limpia, nada se descarta | [`Notebooks/01_bronze_ingesta.py`](Notebooks/01_bronze_ingesta.py) |
-| **Silver** | Tipado, fechas ISO, 9 validaciones, log de errores | [`Notebooks/02_silver_limpieza.py`](Notebooks/02_silver_limpieza.py) |
-| **Gold** | Esquema estrella y panel de entrenamiento | [`Notebooks/03_gold_estrella.py`](Notebooks/03_gold_estrella.py) |
-| **Modelo** | Entrenamiento, evaluación y exportación | [`Notebooks/04_modelo_demanda.py`](Notebooks/04_modelo_demanda.py) |
-| **API** | Expone el modelo como servicio consultable | [`api/`](api/) |
-| **Web** | Consume el API y pinta el mapa | [`web/index.html`](web/index.html) |
+| **Silver** | Tipado, fechas ISO, 10 validaciones, log de errores | [`Notebooks/02_silver_limpieza.py`](Notebooks/02_silver_limpieza.py) |
+| **Gold** | Esquema estrella y panel de demanda | [`Notebooks/03_gold_estrella.py`](Notebooks/03_gold_estrella.py) |
+| **Modelo 1** | Demanda: cuántas salen y llegan | [`Notebooks/04_modelo_demanda.py`](Notebooks/04_modelo_demanda.py) |
+| **Gold** | Reconstrucción de la ocupación por estación y hora | [`Notebooks/05_gold_ocupacion.py`](Notebooks/05_gold_ocupacion.py) |
+| **Modelo 2** | Disponibilidad: ¿habrá bicicletas, y cuántas? | [`Notebooks/06_modelo_disponibilidad.py`](Notebooks/06_modelo_disponibilidad.py) |
+| **API** | Expone los dos modelos como servicio consultable | [`api/`](api/) |
+| **Web** | Consume el API: mapa y consulta puntual | [`web/index.html`](web/index.html) |
 
 ---
 
@@ -209,7 +252,9 @@ de su propia vida útil**.
 
 ---
 
-## El modelo
+## El modelo 1 — demanda
+
+> Responde al **operador**: dónde mandar la camioneta.
 
 **Tarea: regresión.** Dos modelos, uno para salidas y otro para llegadas, porque el déficit es la
 diferencia entre ambos y una estación puede tener mucho movimiento y estar en equilibrio.
@@ -279,21 +324,151 @@ entrenamiento.
 
 ---
 
+## El modelo 2 — disponibilidad
+
+> Responde al **usuario**: *«voy a esta estación el viernes a las 6, ¿va a haber bicicleta?»*
+
+### El obstáculo: los datos no traen el inventario
+
+Para responder esa pregunta hace falta saber cuántas bicicletas hay ancladas en la estación. **Los
+datos abiertos de MiBici no lo publican.** Publican viajes: quién salió, de dónde, a qué hora y a
+dónde llegó. El inventario nunca se observa.
+
+Así que la ocupación no se puede *medir*. Se **reconstruye**
+([`05_gold_ocupacion.py`](Notebooks/05_gold_ocupacion.py)), con un balance de flujos acotado por la
+capacidad física de la estación:
+
+```
+bicis_fin(h) = recortar( bicis_inicio(h) + llegadas(h) − salidas(h),  0,  capacidad )
+bicis_inicio(h+1) = bicis_fin(h)
+```
+
+El recorte es lo que convierte una cuenta aritmética en un modelo físico: una estación no puede
+tener −4 bicicletas ni 30 bicicletas en 19 anclajes. Cada día arranca de cero porque MiBici
+rebalancea de noche, lo que impide que el error se acumule a lo largo de 46 meses.
+
+### Cuánto pesa el supuesto, medido en lugar de asumido
+
+El balance descansa en algo que no observamos: **con cuántas bicicletas amanece cada estación**.
+Suponemos la mitad de la capacidad. En lugar de dejarlo ahí, el notebook calcula **las tres
+trayectorias en la misma pasada** —arrancando a 25 %, 50 % y 75 %— y compara la etiqueta «se quedó
+sin bicis»:
+
+| Comparación | Coinciden |
+|---|---|
+| arrancar a 50 % vs 25 % | 92.08 % de las horas |
+| arrancar a 50 % vs 75 % | 97.79 % de las horas |
+| **las tres de acuerdo** | **89.87 %** |
+
+Horas con estación vacía en el panel completo: **4.48 %**.
+
+**La lectura honesta es que en 1 de cada 10 horas la etiqueta depende del supuesto.** No es
+despreciable y no se esconde. Lo que sí tranquiliza es la asimetría: subir el supuesto casi no
+cambia nada (97.79 %) y bajarlo sí (92.08 %), lo que indica que al 50 % la mayoría de las
+estaciones no están cerca del cero, y que el error posible va en una sola dirección — suponer
+menos bicicletas fabrica más «vacías». El 50 % es la opción conservadora.
+
+**Una consecuencia que hay que declarar:** cuando una estación se vacía, quien llega y no encuentra
+bicicleta *no deja rastro en los datos* — no hay viaje que registrar. Las salidas observadas son
+un piso de la demanda real. El modelo puede afirmar **que no habrá bicicletas**, pero no **a cuánta
+gente dejó a pie**.
+
+### Dos salidas, porque la pregunta tiene dos mitades
+
+[`06_modelo_disponibilidad.py`](Notebooks/06_modelo_disponibilidad.py) entrena dos modelos sobre
+esa reconstrucción:
+
+| | Tarea | Objetivo | Por qué |
+|---|---|---|---|
+| **A** | Regresión | `bicis_inicio` | «cuántas bicicletas» pide un número |
+| **B** | Clasificación | `se_vacio` | «¿habrá o no?» pide una probabilidad |
+
+No basta con una. Un promedio de 2 bicicletas puede venir de «casi siempre hay 2» o de «la mitad
+de los días hay 4 y la otra mitad ninguna», y a quien va a caminar hasta allá esa diferencia le
+importa toda.
+
+### Aquí sí hay F1, y es deliberado
+
+En el modelo 1 argumentamos que **F1 no aplicaba**: no había clases, había conteos. Aquí la
+situación es la contraria. La clase «se vació» es **minoritaria: 3.00 %** de las horas de la
+partición de prueba. Un modelo que siempre dijera «sí habrá bicis» acertaría el 97 % de las veces
+y sería completamente inútil. Por eso:
+
+- **AUC-PR** como métrica principal, que es la correcta cuando la clase positiva es rara;
+- **F1** en el umbral de operación;
+- **Brier** para saber si las probabilidades están *calibradas*, no solo ordenadas.
+
+### Los resultados
+
+Misma partición temporal que el modelo 1: entrena con 4,791,477 filas hasta el 31 de agosto de
+2026, evalúa con las 542,431 de septiembre y octubre. Los dos modelos son directamente comparables.
+
+**A · ¿Cuántas bicicletas?**
+
+| | Línea base | Modelo | Mejora |
+|---|---|---|---|
+| RMSE (bicicletas) | 2.7931 | **2.7197** | +2.6 % |
+| MAE (bicicletas) | 1.9597 | **1.9319** | +1.4 % |
+
+**B · ¿Habrá bicicletas?**
+
+| | Línea base | Modelo | Mejora |
+|---|---|---|---|
+| **AUC-PR** | 0.1990 | **0.3260** | **+63.8 %** |
+| ROC-AUC | 0.7509 | **0.9166** | +22.1 % |
+| F1 | 0.3069 | **0.3644** | +18.7 % |
+| Brier *(menor es mejor)* | 0.0275 | **0.0239** | +13.0 % |
+
+El contraste con el modelo 1 es el hallazgo: **la demanda mejoraba 1.5 %; este clasificador mejora
+64 %.** No es que esté mejor hecho — es que predecir *un evento raro* deja mucho más margen que
+predecir un promedio que la media histórica ya captura bien.
+
+Y para que el 0.326 no se lea como poco: con 3 % de casos positivos, **un clasificador al azar daría
+AUC-PR 0.03**. El modelo está casi **11 veces** por encima del azar; la regla histórica, 6.6 veces.
+
+La regresión de «cuántas bicis» mejora poco (+2.6 %), igual que el modelo 1, y por la misma razón:
+el promedio de las últimas cuatro semanas ya es un predictor fuerte. **El valor de este modelo está
+en el clasificador, no en la regresión**, y conviene decirlo así.
+
+### El umbral es una decisión de producto
+
+El modelo entrega una probabilidad; la aplicación tiene que dar una respuesta. El umbral que las
+separa **no es 0.5 por omisión**: se barre el rango y se elige el que maximiza F1 sobre la clase
+minoritaria. Quedó en **0.21**.
+
+Ese valor bajo tiene sentido con el costo real, que no es simétrico: decir «sí hay bici» y que no
+la haya manda al usuario a caminar en vano; decir «no hay» y que sí hubiera solo le cuesta una ruta
+alterna. El primero es peor, así que el umbral favorece detectar las estaciones que se vacían.
+
+### Las probabilidades significan algo
+
+Que un modelo **ordene** bien no implica que sus probabilidades **signifiquen** algo. Si la
+aplicación muestra «49 % de probabilidad de que no haya bici», ese 49 % tiene que cumplirse
+aproximadamente 49 de cada 100 veces.
+
+Se comprueba por deciles: **el peor desvío de calibración es 0.024**. Por debajo de 0.05, así que
+la página puede mostrar la probabilidad tal cual, y lo hace.
+
+---
+
 ## El API
 
-Expone el modelo como servicio consultable. FastAPI genera el esquema **OpenAPI** y la
+Expone los dos modelos como servicio consultable. FastAPI genera el esquema **OpenAPI** y la
 **validación de entradas** a partir de los modelos Pydantic, sin escribirlos a mano.
 
 Documentación interactiva en `/docs`, esquema crudo en `/openapi.json`.
 
 | Método | Ruta | Para qué |
 |---|---|---|
-| `GET` | `/salud` | Estado del servicio y qué modelo tiene cargado |
-| `GET` | `/modelo` | Tipo, versión, métrica y features del modelo activo |
+| `GET` | `/salud` | Estado del servicio, qué modelos tiene cargados y la hora del servidor |
+| `GET` | `/modelo` | Tipo, versión, métrica y features del modelo de demanda |
+| `GET` | `/modelo/disponibilidad` | Lo mismo para el modelo de disponibilidad |
 | `GET` | `/estaciones` | Catálogo para el mapa |
 | `GET` | `/estaciones/{id}` | Ficha de una estación |
-| `POST` | `/predecir` | Predicción para una estación y una hora |
+| `POST` | `/predecir` | Demanda para una estación y una hora |
 | `POST` | `/predecir/lote` | Hasta 500 estaciones en una llamada (~10 ms para las 470) |
+| `POST` | `/disponibilidad` | ¿Habrá bicicletas en esta estación, ese día y esa hora? |
+| `POST` | `/disponibilidad/lote` | Lo mismo para la ciudad completa |
 
 ```jsonc
 // POST /predecir
@@ -314,6 +489,41 @@ Documentación interactiva en `/docs`, esquema crudo en `/openapi.json`.
 }
 ```
 
+### La entrada de `/disponibilidad` es la que el usuario tiene en la cabeza
+
+Nadie piensa en `2026-11-27T18:00:00`. Piensa «el viernes a las 6». El endpoint acepta eso:
+
+```jsonc
+// POST /disponibilidad
+{ "estacion_id": 194, "dia_semana": 4, "hora": 18 }   // 0 = lunes … 6 = domingo
+
+// respuesta
+{
+  "clave_estacion": "GDL-127",
+  "nombre_dia": "viernes",
+  "hora": 18,
+  "fecha_resuelta": "2026-11-27",   // el API resuelve y lo declara
+  "hay_bicis": false,
+  "bicis_estimadas": 2.4,
+  "probabilidad_sin_bicis": 0.49,
+  "nivel": "baja",
+  "mensaje": "Mejor considera otra estación: hay 49% de probabilidad de que no quede ninguna…",
+  "umbral": 0.21,
+  "advertencia": "Los datos abiertos de MiBici no publican el inventario de las estaciones…",
+  "modelo_tipo": "hist_gradient_boosting",
+  "modelo_version": "1.0.0"
+}
+```
+
+Dos decisiones de diseño detrás de eso:
+
+- **El API resuelve la fecha y la declara.** El mes y los festivos son variables del modelo, así
+  que «el viernes» tiene que convertirse en un viernes concreto. Que lo haga el servicio —y lo
+  devuelva en `fecha_resuelta`— evita que cada cliente lo resuelva por su cuenta y cada uno acabe
+  prediciendo un viernes distinto.
+- **`advertencia` viaja en cada respuesta.** El inventario no se mide, se reconstruye. Quien
+  consuma el endpoint se entera sin tener que leer este README.
+
 ### Validación
 
 Toda entrada inválida se rechaza **antes** de llegar al modelo, con `{"detalle": "...", "codigo": "..."}`.
@@ -322,34 +532,67 @@ Toda entrada inválida se rechaza **antes** de llegar al modelo, con `{"detalle"
 |---|---|---|
 | `estacion_id` fuera de `[1, 99999]` | 422 | `ENTRADA_INVALIDA` |
 | `fecha_hora` no es ISO 8601 o está fuera de 2014–2030 | 422 | `ENTRADA_INVALIDA` |
+| `hora` fuera del horario de servicio `[5, 23]` | 422 | `ENTRADA_INVALIDA` |
+| `dia_semana` fuera de `[0, 6]` | 422 | `ENTRADA_INVALIDA` |
 | Lote vacío, con repetidos o de más de 500 | 422 | `ENTRADA_INVALIDA` |
 | La estación no está en el catálogo | 404 | `NO_ENCONTRADO` |
-| El servicio aún no arranca | 503 | `NO_DISPONIBLE` |
+| El modelo de disponibilidad no está cargado | 503 | `NO_DISPONIBLE` |
 
-### Degradación explícita
+El horario de servicio es **parte del contrato**, no una comprobación interna. Preguntar por las 3
+de la mañana no es un caso raro que haya que manejar: es una pregunta sin respuesta posible, porque
+el modelo nunca vio esas horas. Se rechaza antes de tocar el modelo, y la página web ni siquiera
+ofrece esas horas en el selector.
 
-Si el artefacto del modelo no está presente, el API **no falla ni miente**: responde con la línea
-base histórica y lo declara en `/salud` (`estado: "degradado"`, `modelo_cargado: false`). La
-página web lee ese campo y avisa al usuario que está viendo promedios, no predicciones.
+### Degradación explícita, distinta para cada modelo
+
+Si falta el artefacto de **demanda**, el API **no falla ni miente**: responde con la línea base
+histórica y lo declara en `/salud` (`estado: "degradado"`, `modelo_cargado: false`).
+
+Si falta el de **disponibilidad**, el endpoint responde **503 y explica por qué**. Aquí no hay nada
+histórico que servir: sin la reconstrucción de ocupación, cualquier número sería inventado. Negarse
+es más honesto que contestar algo plausible.
+
+`/salud` reporta los dos por separado a propósito. Mezclarlos en una sola bandera escondería justo
+lo que hay que ver cuando uno está cargado y el otro no.
 
 ---
 
 ## La página web
 
-Un mapa de las 470 estaciones, coloreado por el déficit previsto a la hora que elijas, con la
-lista de las 15 que más bicicletas necesitan.
+Dos vistas sobre el mismo mapa de 470 estaciones:
 
-**Consume el endpoint publicado por HTTP.** No carga el modelo ni la tabla de predicciones en el
-navegador: una sola llamada a `/predecir/lote` alimenta el mapa completo.
+- **Rebalanceo** — coloreado por el déficit previsto, con las 15 estaciones que más bicicletas
+  necesitan. Es la vista del operador.
+- **¿Habrá bici?** — coloreado por nivel de disponibilidad, con una tarjeta que responde para la
+  estación que elijas. Es la vista del usuario.
 
-Lo que maneja:
+**Consume los endpoints publicados por HTTP.** No carga ningún modelo ni tabla de predicciones en
+el navegador: una sola llamada de lote alimenta el mapa completo.
 
-- **Timeout propio de 10 segundos** con `AbortController`.
+### El panel de red
+
+En la esquina superior derecha, siempre visible: la ruta, el código HTTP, la latencia y hace
+cuánto se consultó. Al desplegarlo muestra **la petición y la respuesta tal cual viajaron** —la URL
+completa, el cuerpo JSON enviado, el JSON recibido— y una bitácora de las últimas catorce llamadas
+con su hora y su latencia.
+
+Está ahí porque un mapa bonito es indistinguible de uno con los datos incrustados en el HTML. Con
+ese panel abierto no queda duda de que cada número viene de una llamada al servicio hecha hace
+segundos. Toda petición pasa por una sola función, y esa función es la que escribe la bitácora: si
+una llamada no aparece ahí, es que no se hizo.
+
+Lo que además maneja:
+
+- **Timeout propio de 20 segundos** con `AbortController`, holgado para el primer arranque de Render.
 - **Distingue los modos de falla:** error de petición (404/422) se le explica al usuario; error de
   servicio (5xx), timeout y caída de red ofrecen reintentar.
-- **No asume la forma de la respuesta:** valida que venga la lista de predicciones y tolera
-  `null` en latitud, longitud, capacidad y saturación.
-- **Consulta `/salud` al cargar** y avisa si está viendo la línea base.
+- **No asume la forma de la respuesta:** valida que venga la lista esperada y tolera `null` en
+  latitud, longitud, capacidad y saturación.
+- **Consulta `/salud` al cargar.** Si el modelo de demanda no está, avisa que son promedios; si el
+  de disponibilidad no está, **deshabilita esa pestaña y explica por qué**, en vez de ofrecer un
+  botón que solo da error.
+- **El selector de hora solo ofrece de 5 a 23.** Fuera del horario de servicio el API responde 422,
+  así que la interfaz no propone lo que no se puede pedir.
 
 ### Sobre los colores del mapa
 
@@ -401,38 +644,74 @@ máquina local.
 
 ### Los notebooks
 
-Se importan a Databricks (**Workspace → Import → File**) y se corren en orden. Antes del 01 hay
-que subir los archivos de `Upload_Databricks/bronze/` a un Volume de Unity Catalog.
+Se importan a Databricks y se corren **en orden**. Desde la interfaz: **Workspace → ⋮ → Import →
+URL**, con la liga cruda de cada archivo, por ejemplo:
 
-Cada notebook **se reconcilia solo**: compara sus resultados contra las cifras del perfilado y
-truena si no cuadran al registro. Si el 02 termina, los 17,468,665 viajes se transformaron sin
-perder ni duplicar uno.
+```
+https://raw.githubusercontent.com/PIRATA131/Mibici/main/Notebooks/01_bronze_ingesta.py
+```
+
+Antes del 01 hay que subir los archivos de `Upload_Databricks/bronze/` a un Volume de Unity
+Catalog (`workspace.mibici.raw`, carpeta `bronze`).
+
+| | Notebook | Produce | Dura |
+|---|---|---|---|
+| 1 | `01_bronze_ingesta` | `bronze_viajes`, `bronze_estaciones` | minutos |
+| 2 | `02_silver_limpieza` | `silver_viajes` + log de errores | minutos |
+| 3 | `03_gold_estrella` | esquema estrella + `gold_agg_demanda_estacion_hora` | minutos |
+| 4 | `04_modelo_demanda` | `modelo_demanda.joblib` | minutos |
+| 5 | `05_gold_ocupacion` | `gold_disponibilidad_estacion_hora` | el más lento: recorre ~500 mil grupos de estación-día |
+| 6 | `06_modelo_disponibilidad` | `modelo_disponibilidad.joblib` | minutos |
+
+Los dos artefactos quedan en el Volume, en `/Volumes/workspace/mibici/raw/modelo/`. Se descargan y
+se dejan en [`api/datos/`](api/datos/); el API los detecta al arrancar y `/salud` lo refleja.
+
+**Cada notebook se reconcilia solo.** Compara sus resultados contra las cifras del perfilado y
+truena si no cuadran al registro, antes de escribir nada. Si el 02 termina, los 17,468,665 viajes
+se transformaron sin perder ni duplicar uno. El 05 además comprueba que la ocupación nunca salga
+de `[0, capacidad]` y que el balance de flujos cuadre exactamente donde no hubo recorte.
+
+Estas son las cifras de control. Si al reproducir el pipeline salen otras, algo cambió:
+
+| Comprobación | Valor esperado | Dónde se verifica |
+|---|---|---|
+| Viajes ingeridos | 17,468,665 | notebook 01 |
+| Registros válidos | 16,750,528 (95.89 %) | notebook 02 |
+| Incidencias registradas | 723,673 | notebook 02 |
+| Duplicados exactos (RN-08) | 758 | notebook 02 |
+| Filas del panel de demanda | 9,582,726 | notebook 03 |
+| Acuerdo entre las tres semillas | 89.87 % | notebook 05, celda 3.4 |
+| Horas con estación vacía | 4.48 % del panel | notebook 05, celda 3.4 |
+| AUC-PR del clasificador | 0.3260 vs 0.1990 de línea base | notebook 06, celda 12 |
 
 ---
 
 ## Estructura del repositorio
 
 ```
+├── .github/workflows/
+│   └── mantener-vivo.yml          Consulta y vigila el API cada 5 minutos
 ├── Notebooks/
 │   ├── 01_bronze_ingesta.py       Ingesta cruda a Delta
 │   ├── 02_silver_limpieza.py      Reglas de negocio y log de errores
 │   ├── 03_gold_estrella.py        Esquema estrella y panel de demanda
-│   └── 04_modelo_demanda.py       Entrenamiento, evaluación y exportación
+│   ├── 04_modelo_demanda.py       Modelo 1: entrenamiento y exportación
+│   ├── 05_gold_ocupacion.py       Reconstrucción de la ocupación
+│   └── 06_modelo_disponibilidad.py  Modelo 2: regresión + clasificación
 ├── api/
 │   ├── app/
 │   │   ├── main.py                Endpoints
 │   │   ├── schemas.py             Contratos Pydantic → OpenAPI
-│   │   ├── predictor.py           Baseline y modelo entrenado
+│   │   ├── predictor.py           Baseline y los dos modelos entrenados
 │   │   └── catalogo.py            Catálogo de estaciones en memoria
-│   ├── datos/                     Tabla baseline y artefacto del modelo
+│   ├── datos/                     Tabla baseline y artefactos de los modelos
 │   ├── pruebas_api.py             Pruebas del servicio
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── web/
-│   └── index.html                 Mapa de déficit
+│   └── index.html                 Mapa, consulta puntual y panel de red
 ├── docs/
 │   └── contrato_api.md            Contrato del servicio
-├── Rebalanceo de MiBici.pptx      Diapositivas de la exposición
 ├── render.yaml                    Despliegue del contenedor en Render
 └── README.md
 ```
@@ -443,16 +722,25 @@ perder ni duplicar uno.
 
 Las dejamos escritas porque son las que cambiarían el resultado:
 
-1. **El umbral de 60 segundos** para considerar un viaje un falso retiro descarta 549,047
+1. **La ocupación es una reconstrucción, no una medición.** Es el supuesto más fuerte de todo el
+   proyecto. Los datos abiertos no publican el inventario, así que lo derivamos de un balance de
+   flujos partiendo de que cada estación amanece a media capacidad. En **el 10 % de las horas** la
+   etiqueta «se quedó sin bicis» cambia si se parte de 25 % o 75 % en lugar de 50 %. Está medido en
+   el notebook 05 y reportado arriba; no es un detalle que descubrimos tarde, pero tampoco es algo
+   que podamos resolver con estos datos. Lo resolvería una sola cosa: que MiBici publicara el
+   estado de los anclajes.
+2. **La demanda está censurada.** Quien llega a una estación vacía y se va no genera ningún
+   registro. Todas las salidas observadas son un piso de la demanda real.
+3. **El umbral de 60 segundos** para considerar un viaje un falso retiro descarta 549,047
    registros, el 3.1 % del total. Es el criterio más agresivo del pipeline. Un umbral de 30 s
    dejaría pasar la mitad.
-2. **El horario de servicio 5:00–23:00** en el panel de entrenamiento excluye las horas de
+4. **El horario de servicio 5:00–23:00** en el panel de entrenamiento excluye las horas de
    madrugada. Entre las 2 y las 4 am hay menos de 30 viajes en toda la red y en todo el periodo,
    así que incluirlas solo agregaría ceros que el modelo aprende de memoria.
-3. **Los rezagos de 4 semanas** suponen que la semana entrante se parece a las cuatro anteriores.
+5. **Los rezagos de 4 semanas** suponen que la semana entrante se parece a las cuatro anteriores.
    Eso se rompe en vacaciones, en días de lluvia fuerte y cuando abre una estación nueva.
-4. **El modelo no conoce el clima**, y en Guadalajara la temporada de lluvias mueve la demanda.
-   Es la primera variable que valdría la pena agregar.
+6. **Ninguno de los dos modelos conoce el clima**, y en Guadalajara la temporada de lluvias mueve
+   la demanda. Es la primera variable que valdría la pena agregar.
 
 ---
 
