@@ -442,9 +442,25 @@ El modelo entrega una probabilidad; la aplicación tiene que dar una respuesta. 
 separa **no es 0.5 por omisión**: se barre el rango y se elige el que maximiza F1 sobre la clase
 minoritaria. Quedó en **0.21**.
 
-Ese valor bajo tiene sentido con el costo real, que no es simétrico: decir «sí hay bici» y que no
-la haya manda al usuario a caminar en vano; decir «no hay» y que sí hubiera solo le cuesta una ruta
-alterna. El primero es peor, así que el umbral favorece detectar las estaciones que se vacían.
+En ese punto de operación:
+
+| | Precisión | Exhaustividad | F1 |
+|---|---|---|---|
+| Línea base | 0.212 | **0.555** | 0.307 |
+| Modelo | **0.323** | 0.418 | **0.364** |
+
+El modelo **acierta 1.5 veces más** cuando dice «no va a haber bicis», a cambio de detectar menos
+casos que la regla histórica. Conviene decirlo así de claro en lugar de enseñar solo el F1.
+
+**Y conviene ser explícito sobre algo que es fácil deslizar.** El costo de los dos errores no es
+simétrico: mandar a alguien a una estación vacía es peor que desviarlo de una que sí tenía bicis.
+Pero **F1 es un criterio balanceado y no codifica esa asimetría**. Si quisiéramos favorecerla de
+verdad, el criterio sería F-beta con beta > 1 y el umbral bajaría.
+
+Lo que sí hacemos con la asimetría es la decisión de diseño que importa: **el API devuelve la
+probabilidad cruda, no solo el sí/no**. `hay_bicis` es una comodidad; `probabilidad_sin_bicis` es
+el dato. Quien pese distinto los dos errores pone su propio corte sin reentrenar nada, y la página
+muestra tres niveles en vez de un binario por la misma razón.
 
 ### Las probabilidades significan algo
 
@@ -454,6 +470,37 @@ aproximadamente 49 de cada 100 veces.
 
 Se comprueba por deciles: **el peor desvío de calibración es 0.024**. Por debajo de 0.05, así que
 la página puede mostrar la probabilidad tal cual, y lo hace.
+
+### Lo que la reconstrucción deja ver: una estación con los dos problemas el mismo día
+
+La tabla de estaciones más conflictivas puso arriba a **GDL-049**, con 39 anclajes y
+`prob_sin_bicis = 1.000` los martes a las 8 de la mañana. Un número así, en una estación grande,
+obliga a comprobar si es real o un artefacto del método. El perfil de un martes cualquiera lo
+aclara:
+
+| hora | salidas | llegadas | bicis al inicio |
+|---|---|---|---|
+| 9 | 18.2 | 7.2 | **0.0** |
+| 11 | 11.4 | 9.1 | 0.5 |
+| 13 | 11.5 | 10.5 | 1.6 |
+| 15 | 13.7 | 30.7 | 7.4 |
+| 17 | 18.7 | 46.7 | 36.7 |
+| 18 | 27.0 | 59.7 | **39.0** |
+| 23 | 3.4 | 2.1 | 37.0 |
+
+Es real, y es un patrón de libro: **una estación residencial de origen**. Por la mañana la gente
+sale de ahí y la vacía antes de las nueve; por la tarde regresa y la llena hasta el tope. A las 18 h
+llegan 59.7 bicicletas a una estación de 39 anclajes **que ya está llena**.
+
+Eso expone la otra mitad del problema, la que el modelo todavía no predice: **la saturación**. Un
+usuario que llega a GDL-049 a las 6 de la tarde no se queda sin bicicleta — se queda sin dónde
+dejarla. La reconstrucción ya marca esas horas (`se_lleno`), y es la extensión natural del modelo.
+
+Y también muestra la censura de datos por el otro lado: esas llegadas que no caben tampoco dejan
+rastro de haber fracasado. Los datos solo registran viajes que terminaron bien.
+
+Es además el contraste con **GDL-127**, que se vacía a las 6 de la tarde. Dos estaciones, dos
+patrones opuestos, el mismo sistema.
 
 ---
 

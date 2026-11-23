@@ -36,15 +36,25 @@
 # MAGIC   - **F1** en el umbral de operación;
 # MAGIC   - **Brier** para saber si las probabilidades están calibradas, no solo ordenadas.
 # MAGIC
-# MAGIC ## 3. El costo no es simétrico
+# MAGIC ## 3. El costo no es simétrico, y el umbral no lo arregla
 # MAGIC
 # MAGIC Equivocarse hacia los dos lados no cuesta igual:
 # MAGIC
 # MAGIC - decir **«sí hay bici»** y que no la haya → el usuario camina hasta allá en vano;
 # MAGIC - decir **«no hay bici»** y que sí la hubiera → el usuario toma otra ruta sin necesidad.
 # MAGIC
-# MAGIC El primero es peor. Por eso el umbral de operación no es 0.5: se elige el que maximiza F1
-# MAGIC sobre la clase «se vació», y se reporta cuál quedó.
+# MAGIC El primero es peor. Conviene ser explícito sobre lo que hacemos con eso, porque es fácil
+# MAGIC decir «el costo es asimétrico» y después optimizar algo que no lo es.
+# MAGIC
+# MAGIC **El umbral se elige maximizando F1, que es un criterio balanceado.** F1 pesa igual la
+# MAGIC precisión y la exhaustividad, así que *no* codifica la asimetría. Si quisiéramos favorecerla
+# MAGIC de verdad, el criterio correcto sería F-beta con beta > 1, y el umbral quedaría más abajo.
+# MAGIC
+# MAGIC Lo que sí hacemos con la asimetría es otra cosa, y es la decisión de diseño importante:
+# MAGIC **el API devuelve la probabilidad cruda, no solo el sí/no.** El campo `hay_bicis` es una
+# MAGIC comodidad; `probabilidad_sin_bicis` es el dato. Quien consuma el endpoint y pese distinto
+# MAGIC los dos errores puede poner su propio corte sin volver a entrenar nada, y la página web
+# MAGIC muestra tres niveles en lugar de un binario por la misma razón.
 # MAGIC
 # MAGIC ## 4. Contra qué se compara
 # MAGIC
