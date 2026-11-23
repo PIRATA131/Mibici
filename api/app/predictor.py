@@ -21,6 +21,7 @@ from pathlib import Path
 DIR_DATOS = Path(os.getenv("DIR_DATOS", Path(__file__).resolve().parent.parent / "datos"))
 RUTA_BASELINE = DIR_DATOS / "baseline_estacion_dia_hora.csv"
 RUTA_MODELO = DIR_DATOS / "modelo_demanda.joblib"
+RUTA_DISPONIBILIDAD = DIR_DATOS / "modelo_disponibilidad.joblib"
 
 
 class PredictorBaseline:
@@ -148,6 +149,148 @@ class PredictorML:
         # No existen conteos negativos: el modelo puede predecirlos, la realidad no.
         return [(max(0.0, float(s)), max(0.0, float(l)))
                 for s, l in zip(salidas, llegadas)]
+
+
+class PredictorDisponibilidad:
+    """El modelo entrenado en el notebook 06: responde al usuario, no al operador.
+
+    Dos salidas por consulta, porque la pregunta tiene dos mitades:
+
+      - `bicis` — cuántas bicicletas se esperan ancladas al inicio de esa hora (regresión);
+      - `prob_vacia` — probabilidad de que la estación se quede sin ninguna (clasificación).
+
+    Hacen falta las dos. Una media de 2 bicicletas puede venir de «casi siempre hay 2» o de
+    «la mitad de los días hay 4 y la otra mitad ninguna», y al usuario que va a pararse
+    frente al anclaje esa diferencia le importa toda.
+    """
+
+    tipo = "hist_gradient_boosting"
+    metrica_principal = "AUC-PR (clase «la estación se queda sin bicis»)"
+
+    def __init__(self, ruta: Path = RUTA_DISPONIBILIDAD) -> None:
+        import joblib
+
+        a = joblib.load(ruta)
+        faltan = ({"modelo_bicis", "modelo_vacia", "features", "rezagos", "umbral", "version"}
+                  - set(a))
+        if faltan:
+            raise ValueError(f"El artefacto de disponibilidad no trae {sorted(faltan)}")
+
+        self.version = a["version"]
+        self.features = list(a["features"])
+        self._bicis = a["modelo_bicis"]
+        self._vacia = a["modelo_vacia"]
+        self._rezagos = a["rezagos"]
+        self._festivos = set(a.get("festivos", ()))
+        self.capacidades = {int(k): int(v) for k, v in a.get("capacidades", {}).items()}
+        self.umbral = float(a["umbral"])
+        self.hora_min, self.hora_max = a.get("horario_servicio", (5, 23))
+        self.arranque_supuesto = a.get("arranque_supuesto")
+        self.entrenado_con = a.get("entrenado_con", "")
+        self._metricas = a.get("metricas", {})
+        self._base = a.get("baseline", {})
+        self.valor_metrica = self._metricas.get("vacia", {}).get("auc_pr")
+        self.baseline_rmse = self._base.get("vacia", {}).get("auc_pr")
+
+        self.advertencia = (
+            "Los datos abiertos de MiBici no publican el inventario de las estaciones. La "
+            "ocupación se reconstruye con un balance de flujos acotado por la capacidad, "
+            f"suponiendo que cada estación amanece a {self.arranque_supuesto:.0%} de sus "
+            "anclajes. Es una estimación, no una lectura del anclaje."
+            if self.arranque_supuesto is not None else
+            "La ocupación es una reconstrucción por balance de flujos, no una lectura real."
+        )
+        self.descripcion = (
+            "Dos modelos de gradient boosting sobre el panel Gold de disponibilidad: uno "
+            "estima cuántas bicicletas habrá y otro la probabilidad de que no quede ninguna. "
+            f"Umbral de operación {self.umbral:.2f}, elegido maximizando F1 sobre la clase "
+            f"minoritaria. Rezagos de la ventana {a.get('rezagos_ventana', 'n/d')}. "
+            + self.advertencia
+        )
+
+    def capacidad_de(self, estacion_id: int, respaldo: float | None) -> float:
+        """La capacidad con la que se entrenó manda sobre la del catálogo: el modelo aprendió
+        con esos números y recibir otros lo saca del dominio que conoce."""
+        if estacion_id in self.capacidades:
+            return float(self.capacidades[estacion_id])
+        return float(respaldo) if respaldo else 0.0
+
+    def _vector(self, estacion_id: int, momento: datetime, capacidad: float) -> list[float]:
+        dia_semana = momento.weekday()
+        # Sin historia, el supuesto correcto es una estación sin movimiento y sin bicis:
+        # es lo que significa una combinación que nunca se observó.
+        med_s, med_l, max_s, med_b, min_b, frec_v = self._rezagos.get(
+            (estacion_id, dia_semana, momento.hour), (0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+        valores = {
+            "hora": momento.hour,
+            "dia_semana": dia_semana,
+            "mes": momento.month,
+            "es_fin_semana": 1 if dia_semana >= 5 else 0,
+            "es_festivo": 1 if momento.strftime("%Y-%m-%d") in self._festivos else 0,
+            "capacidad_anclajes": capacidad,
+            "salidas_media_4sem": med_s,
+            "llegadas_media_4sem": med_l,
+            "salidas_max_4sem": max_s,
+            "bicis_inicio_media_4sem": med_b,
+            "bicis_inicio_min_4sem": min_b,
+            "vacia_freq_4sem": frec_v,
+        }
+        return [float(valores[f]) for f in self.features]
+
+    def predecir_muchos(self, peticiones: list[tuple[int, float | None]],
+                        momento: datetime) -> list[tuple[float, float]]:
+        """Devuelve [(bicis_estimadas, probabilidad_sin_bicis)] en el mismo orden.
+
+        Una sola llamada a scikit-learn con la matriz completa, por lo mismo que en
+        PredictorML: el mapa pide la ciudad entera de un golpe.
+        """
+        if not peticiones:
+            return []
+        caps = [self.capacidad_de(e, cap) for e, cap in peticiones]
+        X = [self._vector(e, momento, c) for (e, _), c in zip(peticiones, caps)]
+        bicis = self._bicis.predict(X)
+        probs = self._vacia.predict_proba(X)[:, 1]
+
+        salida = []
+        for b, p, cap in zip(bicis, probs, caps):
+            b = max(0.0, float(b))
+            # El modelo puede predecir 21 bicicletas en 19 anclajes; la realidad no.
+            # Si la capacidad es desconocida (0) no hay techo que aplicar.
+            if cap:
+                b = min(b, cap)
+            salida.append((b, min(max(float(p), 0.0), 1.0)))
+        return salida
+
+    def predecir(self, estacion_id: int, momento: datetime,
+                 capacidad: float | None = None) -> tuple[float, float]:
+        return self.predecir_muchos([(estacion_id, capacidad)], momento)[0]
+
+    def nivel(self, prob: float) -> str:
+        """Traduce la probabilidad a la respuesta que ve el usuario.
+
+        Los cortes cuelgan del umbral medido en el notebook, no de un 0.5 inventado.
+        """
+        if prob >= self.umbral:
+            return "baja"
+        if prob >= self.umbral / 2:
+            return "media"
+        return "alta"
+
+
+def cargar_disponibilidad():
+    """Carga el modelo de disponibilidad si el artefacto ya está en su lugar.
+
+    A diferencia de la demanda, aquí NO hay línea base que servir: sin artefacto no existe
+    la reconstrucción de ocupación y cualquier número sería inventado. El endpoint responde
+    503 y lo dice, que es más honesto que contestar algo plausible.
+    """
+    if not RUTA_DISPONIBILIDAD.exists():
+        return None, ("Todavía no hay modelo de disponibilidad entrenado. "
+                      "Corre el notebook 06 y deja el artefacto en api/datos/.")
+    try:
+        return PredictorDisponibilidad(), None
+    except Exception as e:                                        # noqa: BLE001
+        return None, f"El artefacto de disponibilidad existe pero no cargó ({e})."
 
 
 def cargar_predictor():

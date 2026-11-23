@@ -7,7 +7,7 @@ del proyecto consume estos endpoints por HTTP; no carga el modelo localmente.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException, Path as PathParam, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,19 +18,22 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .catalogo import Catalogo, FichaEstacion
-from .predictor import cargar_predictor
-from .schemas import (Estacion, ErrorRespuesta, InfoModelo, PeticionLote,
-                      PeticionPrediccion, Prediccion, RespuestaLote, Salud)
+from .predictor import cargar_disponibilidad, cargar_predictor
+from .schemas import (DIAS, Disponibilidad, Estacion, ErrorRespuesta, InfoModelo,
+                      PeticionDisponibilidad, PeticionDisponibilidadLote, PeticionLote,
+                      PeticionPrediccion, Prediccion, RespuestaDisponibilidadLote,
+                      RespuestaLote, Salud)
 
 ESTADO: dict = {}
 
 
 @asynccontextmanager
 async def ciclo_vida(app: FastAPI):
-    """Catálogo y predictor se cargan una sola vez, al arrancar: cada petición
+    """Catálogo y predictores se cargan una sola vez, al arrancar: cada petición
     después es una consulta en memoria."""
     ESTADO["catalogo"] = Catalogo()
     ESTADO["predictor"], ESTADO["aviso"] = cargar_predictor()
+    ESTADO["disponibilidad"], ESTADO["aviso_disponibilidad"] = cargar_disponibilidad()
     yield
     ESTADO.clear()
 
@@ -99,6 +102,7 @@ def salud() -> Salud:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail="El servicio todavía no termina de arrancar")
     aviso = ESTADO.get("aviso")
+    disp = ESTADO.get("disponibilidad")
     return Salud(
         estado="ok" if pred.tipo != "baseline_historico" else "degradado",
         modelo_cargado=pred.tipo != "baseline_historico",
@@ -106,6 +110,10 @@ def salud() -> Salud:
         modelo_version=pred.version,
         estaciones_en_catalogo=len(cat),
         detalle=aviso,
+        disponibilidad_cargada=disp is not None,
+        disponibilidad_version=disp.version if disp else None,
+        disponibilidad_detalle=ESTADO.get("aviso_disponibilidad"),
+        servidor_hora=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
 
@@ -175,6 +183,158 @@ def predecir_lote(peticion: PeticionLote) -> RespuestaLote:
     return RespuestaLote(
         fecha_hora=peticion.fecha_hora.replace(minute=0, second=0, microsecond=0),
         total=len(preds), modelo_tipo=p.tipo, modelo_version=p.version, predicciones=preds,
+    )
+
+
+# ──────────────────────────────────────────────────────────── disponibilidad
+
+def _proxima_fecha(dia_semana: int, hora: int) -> datetime:
+    """La próxima vez que caiga ese día de la semana a esa hora.
+
+    El usuario pregunta por «el viernes», pero el modelo usa el mes y si es festivo como
+    variables. Alguien tiene que convertir «el viernes» en una fecha concreta, y es mejor
+    que lo haga el API y lo declare en la respuesta, a que cada cliente lo resuelva por su
+    cuenta y cada uno prediga un viernes distinto.
+    """
+    ahora = datetime.now()
+    objetivo = (ahora.replace(minute=0, second=0, microsecond=0, hour=hora)
+                + timedelta(days=(dia_semana - ahora.weekday()) % 7))
+    if objetivo <= ahora:
+        objetivo += timedelta(days=7)
+    return objetivo
+
+
+def _disponibilidad_o_503():
+    disp = ESTADO.get("disponibilidad")
+    if disp is None:
+        # Sin artefacto no hay reconstrucción de ocupación, y cualquier número que
+        # devolviéramos sería inventado. Mejor decir que no se puede.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=ESTADO.get("aviso_disponibilidad")
+                   or "El modelo de disponibilidad no está cargado.",
+        )
+    return disp
+
+
+def _frase(nivel: str, bicis: float, prob: float) -> str:
+    if nivel == "alta":
+        return (f"Sí vas a encontrar bicicleta: se esperan unas {bicis:.0f} ancladas "
+                f"al inicio de esa hora.")
+    if nivel == "media":
+        return (f"Probablemente sí, pero con poco margen: se esperan unas {bicis:.0f} "
+                f"bicicletas y hay {prob:.0%} de probabilidad de que se agoten.")
+    return (f"Mejor considera otra estación: hay {prob:.0%} de probabilidad de que no "
+            f"quede ninguna bicicleta en esa hora.")
+
+
+def _armar_disponibilidad(ficha: FichaEstacion, momento: datetime,
+                          bicis: float, prob: float) -> Disponibilidad:
+    disp = ESTADO["disponibilidad"]
+    nivel = disp.nivel(prob)
+    return Disponibilidad(
+        estacion_id=ficha.estacion_id,
+        clave_estacion=ficha.clave_estacion,
+        nombre=ficha.nombre,
+        municipio=ficha.municipio,
+        latitud=ficha.latitud,
+        longitud=ficha.longitud,
+        capacidad_anclajes=ficha.capacidad_anclajes,
+        dia_semana=momento.weekday(),
+        nombre_dia=DIAS[momento.weekday()],
+        hora=momento.hour,
+        fecha_resuelta=momento.strftime("%Y-%m-%d"),
+        hay_bicis=prob < disp.umbral,
+        bicis_estimadas=round(bicis, 2),
+        probabilidad_sin_bicis=round(prob, 4),
+        nivel=nivel,
+        mensaje=_frase(nivel, bicis, prob),
+        umbral=round(disp.umbral, 4),
+        advertencia=disp.advertencia,
+        modelo_tipo=disp.tipo,
+        modelo_version=disp.version,
+    )
+
+
+@app.post("/disponibilidad", response_model=Disponibilidad, tags=["Disponibilidad"],
+          summary="¿Habrá bicicletas en esta estación?",
+          responses={404: {"model": ErrorRespuesta, "description": "La estación no existe"},
+                     503: {"model": ErrorRespuesta,
+                           "description": "El modelo de disponibilidad no está cargado"}})
+def disponibilidad(peticion: PeticionDisponibilidad) -> Disponibilidad:
+    """Responde la pregunta del usuario de MiBici: *«voy a esta estación el viernes a las
+    6, ¿va a haber bicicleta?»*
+
+    Devuelve las dos mitades de la respuesta —cuántas bicicletas y qué tan probable es que
+    no quede ninguna— porque una media de 2 bicicletas puede venir de «casi siempre hay 2»
+    o de «la mitad de los días no hay ninguna», y no son lo mismo para quien va a caminar
+    hasta allá.
+    """
+    disp = _disponibilidad_o_503()
+    ficha = ESTADO["catalogo"].obtener(peticion.estacion_id)
+    if ficha is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=f"La estación {peticion.estacion_id} no está en el catálogo. "
+                   f"Consulta /estaciones para ver las disponibles.",
+        )
+    momento = _proxima_fecha(peticion.dia_semana, peticion.hora)
+    bicis, prob = disp.predecir(peticion.estacion_id, momento, ficha.capacidad_anclajes)
+    return _armar_disponibilidad(ficha, momento, bicis, prob)
+
+
+@app.post("/disponibilidad/lote", response_model=RespuestaDisponibilidadLote,
+          tags=["Disponibilidad"],
+          summary="Disponibilidad de varias estaciones en la misma franja",
+          responses={404: {"model": ErrorRespuesta, "description": "Alguna estación no existe"},
+                     503: {"model": ErrorRespuesta,
+                           "description": "El modelo de disponibilidad no está cargado"}})
+def disponibilidad_lote(peticion: PeticionDisponibilidadLote) -> RespuestaDisponibilidadLote:
+    """Alimenta el mapa de disponibilidad: una sola llamada pinta la ciudad completa."""
+    disp = _disponibilidad_o_503()
+    cat = ESTADO["catalogo"]
+    if peticion.estaciones is None:
+        fichas = cat.ubicables()
+    else:
+        faltantes = [e for e in peticion.estaciones if e not in cat]
+        if faltantes:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail=f"Estaciones fuera del catálogo: {faltantes[:10]}"
+                       f"{'…' if len(faltantes) > 10 else ''}",
+            )
+        fichas = [cat.obtener(e) for e in peticion.estaciones]
+
+    momento = _proxima_fecha(peticion.dia_semana, peticion.hora)
+    estimados = disp.predecir_muchos(
+        [(f.estacion_id, f.capacidad_anclajes) for f in fichas], momento)
+    filas = [_armar_disponibilidad(f, momento, b, p)
+             for f, (b, p) in zip(fichas, estimados)]
+    return RespuestaDisponibilidadLote(
+        dia_semana=momento.weekday(),
+        nombre_dia=DIAS[momento.weekday()],
+        hora=momento.hour,
+        fecha_resuelta=momento.strftime("%Y-%m-%d"),
+        total=len(filas),
+        modelo_tipo=disp.tipo,
+        modelo_version=disp.version,
+        umbral=round(disp.umbral, 4),
+        advertencia=disp.advertencia,
+        disponibilidades=filas,
+    )
+
+
+@app.get("/modelo/disponibilidad", response_model=InfoModelo, tags=["Operación"],
+         summary="Ficha del modelo de disponibilidad",
+         responses={503: {"model": ErrorRespuesta,
+                          "description": "El modelo de disponibilidad no está cargado"}})
+def info_disponibilidad() -> InfoModelo:
+    d = _disponibilidad_o_503()
+    return InfoModelo(
+        tipo=d.tipo, version=d.version, descripcion=d.descripcion,
+        entrenado_con=d.entrenado_con, metrica_principal=d.metrica_principal,
+        valor_metrica=d.valor_metrica, baseline_rmse=d.baseline_rmse,
+        features=list(d.features),
     )
 
 
