@@ -1,0 +1,94 @@
+name: API en línea
+
+# El plan gratuito de Render duerme el servicio tras 15 minutos sin tráfico y
+# tarda entre 30 y 60 segundos en despertar. Este flujo lo consulta cada cinco
+# minutos para que siempre responda al instante.
+#
+# De paso hace de monitor: no solo comprueba que responda 200, sino que el
+# artefacto del modelo este cargado. Si el API cayera en modo degradado, esta
+# ejecucion se pondria en rojo y la insignia del README lo mostraria.
+
+on:
+  schedule:
+    # Cada cinco minutos. GitHub puede retrasar las ejecuciones programadas
+    # cuando hay mucha carga, por eso el intervalo es mas corto que los 15
+    # minutos de inactividad que Render tolera.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mantener-vivo
+  cancel-in-progress: false
+
+env:
+  API: https://mibici-api-v8k6.onrender.com
+
+jobs:
+  consultar:
+    name: Consultar /salud
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Despertar y verificar el servicio
+        run: |
+          inicio=$(date +%s%3N)
+          codigo=$(curl --silent --show-error --max-time 180 \
+                        --output respuesta.json \
+                        --write-out "%{http_code}" \
+                        "$API/salud")
+          fin=$(date +%s%3N)
+          ms=$((fin - inicio))
+
+          echo "### API en línea" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| campo | valor |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| endpoint | \`$API/salud\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| código | $codigo |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| latencia | ${ms} ms |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| consultado | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat respuesta.json >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "HTTP $codigo en ${ms} ms"
+          cat respuesta.json
+          echo
+
+          if [ "$codigo" != "200" ]; then
+            echo "::error::El API respondió $codigo en lugar de 200."
+            exit 1
+          fi
+
+          # Responder 200 no basta: el API tambien contesta cuando se quedo sin
+          # artefacto y esta sirviendo la linea base. Eso es una degradacion
+          # silenciosa y queremos enterarnos.
+          if ! grep -q '"estado":"ok"' respuesta.json; then
+            echo "::error::El API responde, pero no en estado ok (modo degradado)."
+            exit 1
+          fi
+          if ! grep -q '"modelo_cargado":true' respuesta.json; then
+            echo "::error::El API responde, pero el modelo no está cargado."
+            exit 1
+          fi
+
+      - name: Comprobar que el modelo predice de verdad
+        run: |
+          # Una prediccion real: si el artefacto estuviera corrupto, /salud
+          # podria pasar y esta llamada no.
+          codigo=$(curl --silent --show-error --max-time 60 \
+                        --header "Content-Type: application/json" \
+                        --data '{"estacion_id":194,"fecha_hora":"2026-11-27T18:00:00"}' \
+                        --output prediccion.json \
+                        --write-out "%{http_code}" \
+                        "$API/predecir")
+          echo "HTTP $codigo"
+          cat prediccion.json
+          echo
+          test "$codigo" = "200"
+          grep -q '"salidas_estimadas"' prediccion.json

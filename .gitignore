@@ -33,3 +33,7 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# La presentacion y el material de otras materias viven en la carpeta, no en el repo
+Rebalanceo de MiBici.pptx
+*.pdf
