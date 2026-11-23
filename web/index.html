@@ -3,105 +3,251 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rebalanceo de MiBici</title>
+<title>MiBici — predicción de demanda y disponibilidad</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 :root{
   color-scheme: light;
-  --surface-1:#fcfcfb; --surface-2:#f4f3f0; --borde:#d6d4cd;
+  --surface-1:#fcfcfb; --surface-2:#f4f3f0; --surface-3:#eceae5; --borde:#d6d4cd;
   --tinta:#0b0b0b; --tinta-2:#52514e; --tinta-3:#78766f;
   /* rampa secuencial azul documentada: 100 -> 700 */
   --s100:#cde2fb; --s250:#86b6ef; --s400:#3987e5; --s550:#1c5cab; --s700:#0d366b;
-  --neutro:#f0efec;                 /* punto medio: sin déficit */
-  --critico:#d03b3b;                /* estado crítico, siempre con etiqueta */
+  --neutro:#f0efec;
+  --critico:#d03b3b;
+  --ok:#1f8a5b;
+  --medio:#b4790d;
   --acento:#2a78d6;
+  --sombra:0 1px 2px rgba(0,0,0,.05), 0 6px 18px rgba(0,0,0,.05);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     color-scheme: dark;
-    --surface-1:#1a1a19; --surface-2:#232321; --borde:#3a3a37;
+    --surface-1:#141413; --surface-2:#1e1e1c; --surface-3:#272724; --borde:#3a3a37;
     --tinta:#ffffff; --tinta-2:#c3c2b7; --tinta-3:#95948c;
     --s100:#104281; --s250:#184f95; --s400:#256abf; --s550:#3987e5; --s700:#86b6ef;
     --neutro:#383835;
+    --ok:#3cc98a; --medio:#e0a72e; --critico:#ef6b6b;
     --acento:#3987e5;
+    --sombra:0 1px 2px rgba(0,0,0,.3), 0 6px 18px rgba(0,0,0,.25);
   }
 }
 *{box-sizing:border-box}
-body{margin:0;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
-     background:var(--surface-1);color:var(--tinta)}
-header{padding:14px 18px;border-bottom:1px solid var(--borde);background:var(--surface-2)}
-h1{margin:0;font-size:17px;letter-spacing:-.01em}
-.sub{color:var(--tinta-2);font-size:12px;margin-top:2px}
-#aviso-modelo,#aviso-error{display:none;margin:10px 18px 0;padding:9px 12px;border-radius:6px;font-size:13px;
-       border:1px solid var(--borde);background:var(--surface-2)}
-#aviso-modelo.visible,#aviso-error.visible{display:block}
-#aviso-error.error{border-color:var(--critico);color:var(--critico)}
-#aviso-modelo b,#aviso-error b{font-weight:600}
-#aviso-error button{margin-left:10px;font:inherit;padding:2px 10px;cursor:pointer;
-              border:1px solid currentColor;border-radius:4px;background:none;color:inherit}
+html,body{height:100%}
+body{margin:0;font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
+     background:var(--surface-1);color:var(--tinta);
+     display:flex;flex-direction:column;min-height:100vh}
+a{color:var(--acento)}
 
-.controles{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;
+/* ───────────────────────────────────────────────────────────── encabezado */
+header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+       padding:11px 18px;border-bottom:1px solid var(--borde);background:var(--surface-2)}
+.marca{flex:1 1 320px;min-width:0}
+h1{margin:0;font-size:16px;letter-spacing:-.015em;font-weight:650}
+.sub{color:var(--tinta-2);font-size:12px;margin-top:1px}
+
+/* ─────────────────────────────────────────────── panel de red en vivo */
+/* Es la pieza central de esta página: hace visible que cada número viene de una
+   llamada HTTP real al servicio, hecha hace segundos. Sin esto, un mapa bonito
+   es indistinguible de un mapa con datos incrustados en el HTML. */
+.red{position:relative;border:1px solid var(--borde);border-radius:9px;background:var(--surface-1);
+     box-shadow:var(--sombra);flex:0 0 auto;max-width:100%}
+.red-barra{display:flex;align-items:center;gap:11px;padding:7px 11px;cursor:pointer;
+           font-size:12px;white-space:nowrap}
+.red-barra:hover{background:var(--surface-2)}
+.pulso{width:8px;height:8px;border-radius:50%;background:var(--tinta-3);flex:none;
+       transition:background .2s}
+.pulso.viva{background:var(--ok);animation:latir 2s ease-in-out infinite}
+.pulso.ocupada{background:var(--acento);animation:latir .7s ease-in-out infinite}
+.pulso.mala{background:var(--critico);animation:none}
+@keyframes latir{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.8)}}
+.red-ruta{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:var(--tinta)}
+.red-dato{color:var(--tinta-2);font-variant-numeric:tabular-nums}
+.red-dato b{color:var(--tinta);font-weight:600}
+.cod{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:600;font-size:11px;
+     padding:1px 5px;border-radius:4px;border:1px solid currentColor}
+.cod.c2{color:var(--ok)} .cod.c4{color:var(--medio)} .cod.c5{color:var(--critico)}
+.flecha{color:var(--tinta-3);transition:transform .18s;font-size:10px}
+.red.abierta .flecha{transform:rotate(180deg)}
+/* Flotante, no empotrado: si creciera dentro del encabezado estiraría toda la barra
+   superior y dejaría un hueco enorme junto al título. */
+.red-cuerpo{display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:1200;
+            width:min(620px,92vw);border:1px solid var(--borde);border-radius:9px;
+            background:var(--surface-2);box-shadow:var(--sombra);
+            max-height:min(66vh,520px);overflow:auto;padding:12px}
+.red.abierta .red-cuerpo{display:block}
+.red-cuerpo h4{margin:0 0 6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
+               color:var(--tinta-2);font-weight:650}
+.red-cuerpo pre{margin:0 0 11px;padding:8px 10px;background:var(--surface-1);
+                border:1px solid var(--borde);border-radius:6px;overflow-x:auto;
+                font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.45;
+                white-space:pre-wrap;word-break:break-word;color:var(--tinta-2)}
+.bitacora{display:grid;grid-template-columns:auto auto 1fr auto auto;gap:2px 10px;
+          font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;align-items:baseline}
+.bitacora span{padding:2px 0;color:var(--tinta-2);white-space:nowrap}
+.bitacora .ruta{color:var(--tinta);overflow:hidden;text-overflow:ellipsis}
+.bitacora .ms{text-align:right;font-variant-numeric:tabular-nums}
+
+/* ───────────────────────────────────────────────────────────── pestañas */
+.pestanas{display:flex;gap:4px;padding:0 18px;border-bottom:1px solid var(--borde);
+          background:var(--surface-2)}
+.pestana{appearance:none;border:0;background:none;font:inherit;font-size:13.5px;
+         padding:10px 14px 9px;cursor:pointer;color:var(--tinta-2);
+         border-bottom:2px solid transparent;margin-bottom:-1px}
+.pestana:hover{color:var(--tinta)}
+.pestana[aria-selected="true"]{color:var(--tinta);font-weight:600;border-bottom-color:var(--acento)}
+.pestana small{display:block;font-size:11px;font-weight:400;color:var(--tinta-3)}
+.pestana[aria-selected="true"] small{color:var(--tinta-2)}
+
+/* ───────────────────────────────────────────────────────────── avisos */
+.aviso{display:none;margin:10px 18px 0;padding:9px 12px;border-radius:7px;font-size:13px;
+       border:1px solid var(--borde);background:var(--surface-2)}
+.aviso.visible{display:block}
+.aviso.error{border-color:var(--critico);color:var(--critico)}
+.aviso b{font-weight:650}
+.aviso button{margin-left:10px;font:inherit;padding:2px 10px;cursor:pointer;
+              border:1px solid currentColor;border-radius:5px;background:none;color:inherit}
+
+/* ───────────────────────────────────────────────────────────── controles */
+.controles{display:flex;gap:13px;flex-wrap:wrap;align-items:flex-end;
            padding:12px 18px;border-bottom:1px solid var(--borde)}
 .campo{display:flex;flex-direction:column;gap:3px}
-.campo label{font-size:11px;color:var(--tinta-2);text-transform:uppercase;letter-spacing:.04em}
-select,button.accion{font:inherit;padding:6px 10px;border:1px solid var(--borde);border-radius:6px;
-                     background:var(--surface-1);color:var(--tinta)}
-button.accion{cursor:pointer;border-color:var(--acento);color:var(--acento)}
-button.accion:disabled{opacity:.5;cursor:default}
+/* display:flex le gana al [hidden] del navegador, así que hay que decirlo aquí. */
+.campo[hidden]{display:none}
+.campo label{font-size:10.5px;color:var(--tinta-2);text-transform:uppercase;letter-spacing:.05em}
+select,input[type=search],button.accion{
+  font:inherit;padding:6px 10px;border:1px solid var(--borde);border-radius:7px;
+  background:var(--surface-1);color:var(--tinta)}
+input[type=search]{min-width:260px}
+button.accion{cursor:pointer;border-color:var(--acento);color:var(--acento);font-weight:550}
+button.accion:hover:not(:disabled){background:var(--acento);color:#fff}
+button.accion:disabled{opacity:.45;cursor:default}
 
-main{display:grid;grid-template-columns:1fr 390px;gap:0;height:calc(100vh - 170px);min-height:460px}
-@media (max-width:900px){main{grid-template-columns:1fr;height:auto}#mapa{height:60vh}}
-#mapa{height:100%;background:var(--surface-2)}
-aside{border-left:1px solid var(--borde);overflow-y:auto;padding:14px 16px}
-aside h2{font-size:13px;margin:0 0 2px;text-transform:uppercase;letter-spacing:.05em;color:var(--tinta-2)}
+/* ───────────────────────────────────────────────────────────── cuerpo */
+main{flex:1;display:grid;grid-template-columns:1fr 400px;min-height:430px}
+@media (max-width:980px){main{grid-template-columns:1fr}#mapa{height:56vh;min-height:320px}}
+#mapa{height:100%;min-height:380px;background:var(--surface-2)}
+aside{border-left:1px solid var(--borde);overflow-y:auto;padding:15px 17px;background:var(--surface-1)}
+@media (max-width:980px){aside{border-left:0;border-top:1px solid var(--borde)}}
+aside h2{font-size:11.5px;margin:0 0 2px;text-transform:uppercase;letter-spacing:.06em;
+         color:var(--tinta-2);font-weight:650}
 aside .nota{font-size:12px;color:var(--tinta-3);margin:0 0 12px}
+.oculto{display:none !important}
 
-.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
-.kpi{border:1px solid var(--borde);border-radius:7px;padding:9px 11px;background:var(--surface-2)}
-.kpi .n{font-size:21px;font-weight:600;letter-spacing:-.02em}
-.kpi .e{font-size:11px;color:var(--tinta-2)}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:16px}
+.kpi{border:1px solid var(--borde);border-radius:8px;padding:9px 11px;background:var(--surface-2)}
+.kpi .n{font-size:21px;font-weight:650;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+.kpi .e{font-size:11px;color:var(--tinta-2);line-height:1.3}
+
+/* ───────────────────────────── tarjeta de respuesta de disponibilidad */
+.respuesta{border:1px solid var(--borde);border-left:4px solid var(--tinta-3);border-radius:9px;
+           padding:14px;background:var(--surface-2);margin-bottom:15px}
+.respuesta.alta{border-left-color:var(--ok)}
+.respuesta.media{border-left-color:var(--medio)}
+.respuesta.baja{border-left-color:var(--critico)}
+.respuesta .est{font-size:12px;color:var(--tinta-2)}
+.respuesta .veredicto{font-size:17px;font-weight:650;letter-spacing:-.015em;margin:4px 0 8px;
+                      line-height:1.3}
+.respuesta.alta .veredicto{color:var(--ok)}
+.respuesta.media .veredicto{color:var(--medio)}
+.respuesta.baja .veredicto{color:var(--critico)}
+.respuesta .cuando{font-size:12px;color:var(--tinta-2);margin-bottom:10px}
+.cifras{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:11px 0 0}
+.cifras .c{border-top:1px solid var(--borde);padding-top:7px}
+.cifras .v{font-size:19px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.cifras .l{font-size:11px;color:var(--tinta-2);line-height:1.3}
+.barra{height:7px;border-radius:4px;background:var(--surface-3);overflow:hidden;margin-top:7px}
+.barra i{display:block;height:100%;border-radius:4px;transition:width .35s ease}
+.respuesta.alta .barra i{background:var(--ok)}
+.respuesta.media .barra i{background:var(--medio)}
+.respuesta.baja .barra i{background:var(--critico)}
+.umbral{font-size:11px;color:var(--tinta-3);margin-top:5px}
 
 table{width:100%;border-collapse:collapse;font-size:12.5px}
-th{text-align:left;font-weight:600;color:var(--tinta-2);font-size:11px;text-transform:uppercase;
-   letter-spacing:.04em;padding:5px 6px;border-bottom:1px solid var(--borde)}
+th{text-align:left;font-weight:650;color:var(--tinta-2);font-size:10.5px;text-transform:uppercase;
+   letter-spacing:.05em;padding:5px 6px;border-bottom:1px solid var(--borde)}
 td{padding:6px;border-bottom:1px solid var(--borde);vertical-align:top}
 td.num{text-align:right;font-variant-numeric:tabular-nums}
 tbody tr{cursor:pointer}
 tbody tr:hover{background:var(--surface-2)}
 .punto{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;
        vertical-align:baseline;border:1px solid rgba(0,0,0,.18)}
-.etiqueta-critica{display:inline-block;font-size:10px;font-weight:600;color:var(--critico);
+.etiqueta-critica{display:inline-block;font-size:10px;font-weight:650;color:var(--critico);
                   border:1px solid var(--critico);border-radius:3px;padding:0 4px;margin-left:5px;
                   white-space:nowrap}
 
 .leyenda{margin:16px 0 0;padding-top:12px;border-top:1px solid var(--borde)}
-.leyenda .fila{display:flex;align-items:center;gap:7px;margin-bottom:4px;font-size:12px;color:var(--tinta-2)}
+.leyenda .fila{display:flex;align-items:center;gap:7px;margin-bottom:4px;font-size:12px;
+               color:var(--tinta-2)}
 .leyenda .sw{width:15px;height:15px;border-radius:3px;border:1px solid var(--borde);flex:none}
+.salvedad{margin-top:13px;padding:9px 11px;border:1px solid var(--borde);border-radius:7px;
+          background:var(--surface-2);font-size:11.5px;color:var(--tinta-2);line-height:1.5}
+.salvedad b{color:var(--tinta);font-weight:650}
 
-.pie{padding:10px 18px;border-top:1px solid var(--borde);font-size:11.5px;color:var(--tinta-3);
-     display:flex;gap:16px;flex-wrap:wrap}
+.pie{padding:9px 18px;border-top:1px solid var(--borde);font-size:11.5px;color:var(--tinta-3);
+     display:flex;gap:16px;flex-wrap:wrap;background:var(--surface-2)}
 code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
-     background:var(--surface-2);padding:1px 4px;border-radius:3px}
-.cargando{opacity:.55;transition:opacity .15s}
+     background:var(--surface-3);padding:1px 4px;border-radius:3px}
+.cargando #mapa,.cargando aside{opacity:.55;transition:opacity .15s}
 .leaflet-popup-content{font:13px/1.45 system-ui,sans-serif;margin:11px 13px}
 .leaflet-popup-content h3{margin:0 0 5px;font-size:13.5px}
 .leaflet-popup-content dl{display:grid;grid-template-columns:auto auto;gap:2px 12px;margin:6px 0 0}
 .leaflet-popup-content dt{color:#52514e;font-size:12px}
 .leaflet-popup-content dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;font-size:12px}
+.leaflet-popup-content .sel{margin-top:9px;width:100%;font:inherit;font-size:12px;padding:4px;
+  cursor:pointer;border:1px solid #2a78d6;color:#2a78d6;background:none;border-radius:5px}
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Rebalanceo de MiBici — déficit previsto por estación</h1>
-  <div class="sub">Predice cuántas bicicletas faltarán en cada estación a una hora dada.
-    Proyecto final · César Roberto Murillo Figueroa y Andrés Muñoz Rubalcava</div>
+  <div class="marca">
+    <h1>MiBici — demanda y disponibilidad</h1>
+    <div class="sub">Proyecto final · César Roberto Murillo Figueroa y Andrés Muñoz Rubalcava</div>
+  </div>
+
+  <div class="red" id="red">
+    <div class="red-barra" id="red-barra" role="button" tabindex="0"
+         aria-expanded="false" aria-controls="red-cuerpo"
+         title="Ver la última petición y respuesta tal cual viajaron">
+      <span class="pulso" id="pulso"></span>
+      <span class="red-ruta" id="red-ruta">conectando…</span>
+      <span class="cod" id="red-cod" hidden></span>
+      <span class="red-dato"><b id="red-ms">—</b> ms</span>
+      <span class="red-dato" id="red-hace">—</span>
+      <span class="flecha">▼</span>
+    </div>
+    <div class="red-cuerpo" id="red-cuerpo">
+      <h4>Servicio</h4>
+      <pre id="red-host">—</pre>
+      <h4>Última petición</h4>
+      <pre id="red-peticion">—</pre>
+      <h4>Respuesta del servicio</h4>
+      <pre id="red-respuesta">—</pre>
+      <h4>Bitácora de llamadas</h4>
+      <div class="bitacora" id="red-bitacora"></div>
+    </div>
+  </div>
 </header>
 
-<div id="aviso-modelo"></div>
-<div id="aviso-error"></div>
+<div class="pestanas" role="tablist">
+  <button class="pestana" id="tab-rebalanceo" role="tab" aria-selected="true"
+          aria-controls="panel-rebalanceo">Rebalanceo
+    <small>para el operador: dónde faltarán bicis</small></button>
+  <button class="pestana" id="tab-disponibilidad" role="tab" aria-selected="false"
+          aria-controls="panel-disponibilidad">¿Habrá bici?
+    <small>para el usuario: ¿voy o no voy?</small></button>
+</div>
+
+<div class="aviso" id="aviso-modelo"></div>
+<div class="aviso" id="aviso-error"></div>
 
 <div class="controles">
+  <div class="campo" id="campo-estacion" hidden>
+    <label for="estacion">Estación</label>
+    <input type="search" id="estacion" list="estaciones" placeholder="Busca por clave o nombre"
+           autocomplete="off">
+    <datalist id="estaciones"></datalist>
+  </div>
   <div class="campo">
     <label for="dia">Día</label>
     <select id="dia">
@@ -120,38 +266,70 @@ code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
     <select id="api">
       <option value="">mismo origen</option>
       <option value="http://localhost:8000">http://localhost:8000</option>
+      <option value="https://mibici-api-v8k6.onrender.com">mibici-api-v8k6.onrender.com</option>
     </select>
   </div>
-  <button class="accion" id="recargar">Actualizar</button>
+  <button class="accion" id="recargar">Consultar al modelo</button>
 </div>
 
 <main>
   <div id="mapa"></div>
+
   <aside>
-    <div class="kpis">
-      <div class="kpi"><div class="n" id="kpi-estaciones">—</div><div class="e">estaciones</div></div>
-      <div class="kpi"><div class="n" id="kpi-deficit">—</div><div class="e">bicis a trasladar</div></div>
-      <div class="kpi"><div class="n" id="kpi-criticas">—</div><div class="e">se vacían por completo</div></div>
-      <div class="kpi"><div class="n" id="kpi-salidas">—</div><div class="e">salidas previstas</div></div>
+    <!-- ───────────────────────────────────── rebalanceo -->
+    <div id="panel-rebalanceo" role="tabpanel" aria-labelledby="tab-rebalanceo">
+      <div class="kpis">
+        <div class="kpi"><div class="n" id="kpi-estaciones">—</div><div class="e">estaciones</div></div>
+        <div class="kpi"><div class="n" id="kpi-deficit">—</div><div class="e">bicis a trasladar</div></div>
+        <div class="kpi"><div class="n" id="kpi-criticas">—</div><div class="e">se vacían por completo</div></div>
+        <div class="kpi"><div class="n" id="kpi-salidas">—</div><div class="e">salidas previstas</div></div>
+      </div>
+
+      <h2>Dónde llevar bicis</h2>
+      <p class="nota">Las 15 estaciones con mayor déficit en esa hora. Clic para verlas en el mapa.</p>
+      <table>
+        <thead><tr><th>Estación</th><th class="num">Faltan</th><th class="num">Cap.</th></tr></thead>
+        <tbody id="tabla"></tbody>
+      </table>
+
+      <div class="leyenda">
+        <div class="fila"><span class="sw" style="background:#9b9a94;opacity:.5"></span>
+          Sin déficit — la estación acumula o está en equilibrio</div>
+        <div class="fila"><span class="sw" style="background:#86b6ef"></span>Déficit bajo</div>
+        <div class="fila"><span class="sw" style="background:#1c5cab"></span>Déficit medio</div>
+        <div class="fila"><span class="sw" style="background:#0d366b"></span>Déficit alto</div>
+        <div class="fila"><span class="etiqueta-critica">SE VACÍA</span>
+          El déficit supera la capacidad de la estación</div>
+        <div class="fila" style="margin-top:6px">El tamaño del círculo indica el movimiento total
+          (salidas más llegadas).</div>
+      </div>
     </div>
 
-    <h2>Dónde llevar bicis</h2>
-    <p class="nota">Las 15 estaciones con mayor déficit en esa hora. Clic para verlas en el mapa.</p>
-    <table>
-      <thead><tr><th>Estación</th><th class="num">Faltan</th><th class="num">Cap.</th></tr></thead>
-      <tbody id="tabla"></tbody>
-    </table>
+    <!-- ───────────────────────────────────── disponibilidad -->
+    <div id="panel-disponibilidad" class="oculto" role="tabpanel"
+         aria-labelledby="tab-disponibilidad">
+      <div id="disp-respuesta"></div>
 
-    <div class="leyenda">
-      <div class="fila"><span class="sw" style="background:#9b9a94;opacity:.5"></span>
-        Sin déficit — la estación acumula o está en equilibrio</div>
-      <div class="fila"><span class="sw" style="background:#86b6ef"></span>Déficit bajo</div>
-      <div class="fila"><span class="sw" style="background:#1c5cab"></span>Déficit medio</div>
-      <div class="fila"><span class="sw" style="background:#0d366b"></span>Déficit alto</div>
-      <div class="fila"><span class="etiqueta-critica">SE VACÍA</span>
-        El déficit supera la capacidad de la estación</div>
-      <div class="fila" style="margin-top:6px">El tamaño del círculo indica el movimiento total
-        (salidas más llegadas).</div>
+      <h2>Dónde sí vas a encontrar</h2>
+      <p class="nota">Las estaciones con mayor probabilidad de tener bicicletas en esa franja.
+        Clic para verlas en el mapa.</p>
+      <table>
+        <thead><tr><th>Estación</th><th class="num">Bicis</th><th class="num">Sin bicis</th></tr></thead>
+        <tbody id="tabla-disp"></tbody>
+      </table>
+
+      <div class="leyenda">
+        <div class="fila"><span class="sw" style="background:#1f8a5b"></span>
+          Disponibilidad alta — sí vas a encontrar</div>
+        <div class="fila"><span class="sw" style="background:#b4790d"></span>
+          Media — poco margen</div>
+        <div class="fila"><span class="sw" style="background:#d03b3b"></span>
+          Baja — probablemente no quede ninguna</div>
+        <div class="fila" style="margin-top:6px">El tamaño del círculo indica cuántas bicicletas
+          se esperan ancladas.</div>
+      </div>
+
+      <div class="salvedad" id="disp-salvedad"></div>
     </div>
   </aside>
 </main>
@@ -160,27 +338,101 @@ code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
   <span id="pie-modelo">—</span>
   <span id="pie-tiempo">—</span>
   <span>Datos: <a href="https://www.mibici.net/es/datos-abiertos/">datos abiertos de MiBici</a></span>
+  <span><a href="https://github.com/PIRATA131/Mibici">código en GitHub</a></span>
+  <span><a id="enlace-docs" href="/docs">documentación del API</a></span>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 "use strict";
 
-// El modelo vive detrás del API: esta página NUNCA calcula una predicción, solo pide y pinta.
-const TIMEOUT_MS = 10000;
-const base = () => document.getElementById("api").value.replace(/\/$/, "");
+/* El modelo vive detrás del API: esta página NUNCA calcula una predicción.
+   Solo pide, pinta, y deja ver la llamada que hizo. */
 
-/* ---------------------------------------------------------------- utilidades */
+const TIMEOUT_MS = 20000;          // Render puede tardar en despertar en la primera consulta
+const HORA_MIN = 5, HORA_MAX = 23; // horario de servicio de MiBici; fuera de ahí el API da 422
+const MAX_BITACORA = 14;
 
-// Dos banners distintos a propósito: el estado del modelo es permanente mientras siga
-// activo el baseline, y no debe borrarse solo porque una petición salió bien.
-const bModelo = document.getElementById("aviso-modelo");
-const bError  = document.getElementById("aviso-error");
+const $ = id => document.getElementById(id);
+const base = () => $("api").value.replace(/\/$/, "");
 
-function avisoModelo(html) { bModelo.className = "visible"; bModelo.innerHTML = html; }
+/* ═══════════════════════════════════════════════ panel de red en vivo */
+
+const REGISTRO = [];
+let ultima = null;
+
+function recortar(txt, n = 1400) {
+  if (txt.length <= n) return txt;
+  return txt.slice(0, n) + `\n… (${(txt.length - n).toLocaleString("es-MX")} caracteres más)`;
+}
+
+function claseCodigo(c) {
+  return c >= 500 ? "c5" : c >= 400 ? "c4" : "c2";
+}
+
+function pintarRed() {
+  const host = base() || location.origin;
+  $("red-host").textContent = host;
+  $("enlace-docs").href = host + "/docs";
+
+  if (!ultima) return;
+  $("red-ruta").textContent = `${ultima.metodo} ${ultima.ruta}`;
+  const cod = $("red-cod");
+  cod.hidden = false;
+  cod.textContent = ultima.codigo || "ERR";
+  cod.className = "cod " + claseCodigo(ultima.codigo || 599);
+  $("red-ms").textContent = ultima.ms;
+  $("red-peticion").textContent =
+    `${ultima.metodo} ${host}${ultima.ruta}\n` +
+    (ultima.cuerpo ? `Content-Type: application/json\n\n${ultima.cuerpo}` : "(sin cuerpo)");
+  $("red-respuesta").textContent = recortar(ultima.respuesta || "—");
+
+  const b = $("red-bitacora");
+  b.innerHTML = "";
+  for (const r of REGISTRO.slice(-MAX_BITACORA).reverse()) {
+    b.insertAdjacentHTML("beforeend",
+      `<span>${r.hora}</span>` +
+      `<span class="cod ${claseCodigo(r.codigo || 599)}">${r.codigo || "ERR"}</span>` +
+      `<span class="ruta">${r.metodo} ${r.ruta}</span>` +
+      `<span class="ms">${r.ms} ms</span>` +
+      `<span>${r.filas !== null ? r.filas + " filas" : ""}</span>`);
+  }
+  refrescarHace();
+}
+
+function refrescarHace() {
+  if (!ultima) return;
+  const s = Math.max(0, Math.round((Date.now() - ultima.t) / 1000));
+  $("red-hace").textContent =
+    s < 2 ? "ahora mismo" : s < 60 ? `hace ${s} s`
+    : s < 3600 ? `hace ${Math.floor(s / 60)} min` : `hace ${Math.floor(s / 3600)} h`;
+}
+setInterval(refrescarHace, 1000);
+
+function pulso(estado) {
+  $("pulso").className = "pulso " + estado;
+}
+
+$("red-barra").addEventListener("click", () => {
+  const abierto = $("red").classList.toggle("abierta");
+  $("red-barra").setAttribute("aria-expanded", String(abierto));
+});
+$("red-barra").addEventListener("keydown", e => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("red-barra").click(); }
+});
+
+/* ═══════════════════════════════════════════════════════════ avisos */
+
+const bModelo = $("aviso-modelo"), bError = $("aviso-error");
+
+function avisoModelo(html) {
+  bModelo.className = "aviso visible";
+  bModelo.innerHTML = html;
+}
+const ocultarModelo = () => { bModelo.className = "aviso"; bModelo.innerHTML = ""; };
 
 function avisoError(html, reintento = null) {
-  bError.className = "visible error";
+  bError.className = "aviso visible error";
   bError.innerHTML = html;
   if (reintento) {
     const b = document.createElement("button");
@@ -189,65 +441,98 @@ function avisoError(html, reintento = null) {
     bError.appendChild(b);
   }
 }
-const ocultarError = () => { bError.className = ""; bError.innerHTML = ""; };
+const ocultarError = () => { bError.className = "aviso"; bError.innerHTML = ""; };
+
+/* ═══════════════════════════════════════════════ una sola puerta al API */
 
 /**
- * Una sola puerta de entrada al API. Aquí viven el timeout y la traducción de
- * cada modo de falla a un mensaje que el usuario pueda entender.
+ * Toda llamada pasa por aquí: timeout, traducción de fallas y, sobre todo,
+ * el registro que alimenta el panel de red. Si una petición no aparece en la
+ * bitácora es que no se hizo.
  */
 async function pedir(ruta, opciones = {}) {
+  const metodo = (opciones.method || "GET").toUpperCase();
+  const cuerpo = opciones.body || null;
   const ctrl = new AbortController();
   const reloj = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const t0 = performance.now();
+
+  pulso("ocupada");
+  $("red-ruta").textContent = `${metodo} ${ruta}`;
+  $("red-cod").hidden = true;
+
+  const anotar = (codigo, textoRespuesta, filas) => {
+    const ms = Math.round(performance.now() - t0);
+    ultima = {
+      metodo, ruta, codigo, ms, t: Date.now(), cuerpo,
+      respuesta: textoRespuesta, filas,
+      hora: new Date().toLocaleTimeString("es-MX", { hour12: false }),
+    };
+    REGISTRO.push(ultima);
+    if (REGISTRO.length > 60) REGISTRO.shift();
+    pulso(codigo && codigo < 400 ? "viva" : "mala");
+    pintarRed();
+    return ms;
+  };
+
   let r;
   try {
-    r = await fetch(base() + ruta, { ...opciones, signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", ...(opciones.headers || {}) } });
+    r = await fetch(base() + ruta, {
+      ...opciones, signal: ctrl.signal,
+      headers: { "Content-Type": "application/json", ...(opciones.headers || {}) },
+    });
   } catch (e) {
     clearTimeout(reloj);
-    if (e.name === "AbortError")
-      throw { tipo: "timeout", msg: `El servicio no respondió en ${TIMEOUT_MS / 1000} segundos.` };
+    const esTimeout = e.name === "AbortError";
+    anotar(0, esTimeout ? "(sin respuesta: se agotó el tiempo)" : "(sin respuesta: fallo de red)", null);
+    if (esTimeout)
+      throw { tipo: "timeout",
+              msg: `El servicio no respondió en ${TIMEOUT_MS / 1000} segundos. ` +
+                   `El plan gratuito de Render duerme el servicio tras 15 minutos sin uso.` };
     throw { tipo: "red", msg: "No se pudo contactar al servicio. ¿Está levantado el API?" };
   }
   clearTimeout(reloj);
 
+  const texto = await r.text();
+  let json = null;
+  try { json = JSON.parse(texto); } catch { /* puede no ser JSON: un 502 de un proxy */ }
+
+  const filas = json && (Array.isArray(json.predicciones) ? json.predicciones.length
+              : Array.isArray(json.disponibilidades) ? json.disponibilidades.length
+              : Array.isArray(json) ? json.length : null);
+  anotar(r.status, json ? JSON.stringify(json, null, 2) : texto, filas);
+
   if (!r.ok) {
-    // El cuerpo de error puede no ser JSON (un 502 de un proxy, por ejemplo).
     let detalle = `El servicio respondió ${r.status}.`;
-    try {
-      const j = await r.json();
-      if (j.detalle) detalle = j.detalle;
-      else if (Array.isArray(j.detail) && j.detail[0]?.msg) detalle = j.detail[0].msg;
-    } catch { /* se queda el mensaje genérico */ }
+    if (json?.detalle) detalle = json.detalle;
+    else if (Array.isArray(json?.detail) && json.detail[0]?.msg) detalle = json.detail[0].msg;
     throw { tipo: r.status >= 500 ? "servicio" : "peticion", codigo: r.status, msg: detalle };
   }
-
-  try {
-    return await r.json();
-  } catch {
+  if (json === null)
     throw { tipo: "respuesta", msg: "El servicio devolvió algo que no es JSON válido." };
-  }
+  return json;
 }
 
 function explicar(err, reintento) {
-  const recuperable = err.tipo === "timeout" || err.tipo === "red" || err.tipo === "servicio";
-  avisoError(`<b>No se pudo actualizar el mapa.</b> ${err.msg}`,
+  const recuperable = ["timeout", "red", "servicio"].includes(err.tipo);
+  avisoError(`<b>No se pudo consultar al modelo.</b> ${err.msg}`,
              recuperable ? reintento : null);
 }
 
-/* ------------------------------------------------------------------- escalas */
+/* ═══════════════════════════════════════════════════════════ escalas */
 
-const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-
-// La superficie de este gráfico son las teselas de OpenStreetMap, que SIEMPRE son claras,
-// aunque la página esté en modo oscuro. Por eso los marcadores usan la rampa de modo claro
-// fija y no las variables CSS del tema: el color tiene que leerse contra el mapa, no contra
-// el fondo de la página.
-const RAMPA = ["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"];  // azul 100→700
-const SIN_DEFICIT = "#9b9a94";   // gris neutro: el caso nulo debe recederse, no competir
+/* La superficie de este gráfico son las teselas de OpenStreetMap, que SIEMPRE son
+   claras aunque la página esté en modo oscuro. Por eso los marcadores llevan colores
+   fijos y no las variables del tema: tienen que leerse contra el mapa. */
+const RAMPA = ["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"];
+const SIN_DEFICIT = "#9b9a94";
 const CRITICO = "#d03b3b";
+const NIVEL_COLOR = { alta: "#1f8a5b", media: "#b4790d", baja: "#d03b3b" };
+const NIVEL_TEXTO = { alta: "Disponibilidad alta", media: "Disponibilidad media",
+                      baja: "Disponibilidad baja" };
 
-// Cortes absolutos en bicis, no cuantiles: así el color significa lo mismo al cambiar de
-// hora. Si a las 3am todo está tranquilo, el mapa se ve claro — que es la verdad.
+/* Cortes absolutos en bicis, no cuantiles: así el color significa lo mismo al cambiar
+   de hora. Si a las 6 am todo está tranquilo, el mapa se ve claro — que es la verdad. */
 const CORTES = [0.5, 3, 8, 18];
 function colorDeficit(d) {
   if (d < CORTES[0]) return SIN_DEFICIT;
@@ -256,24 +541,32 @@ function colorDeficit(d) {
   if (d < CORTES[3]) return RAMPA[3];
   return RAMPA[4];
 }
-// Las estaciones sin déficit se dibujan chicas y translúcidas: están ahí como contexto,
-// no como hallazgo.
 const radio = (mov, deficit) =>
   deficit < CORTES[0] ? Math.max(2.5, Math.min(7, 1.3 * Math.sqrt(mov)))
                       : Math.max(5, Math.min(22, 3.2 * Math.sqrt(mov)));
+
 const n1 = x => (Math.round(x * 10) / 10).toLocaleString("es-MX");
 const n0 = x => Math.round(x).toLocaleString("es-MX");
+const pct = x => `${Math.round(x * 100)}%`;
 
-/* ---------------------------------------------------------------------- mapa */
+/* ══════════════════════════════════════════════════════════════ mapa */
 
 const mapa = L.map("mapa", { zoomControl: true }).setView([20.676, -103.38], 12);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 18, attribution: "&copy; OpenStreetMap"
+  maxZoom: 18, attribution: "&copy; OpenStreetMap",
 }).addTo(mapa);
 const capa = L.layerGroup().addTo(mapa);
 const marcadores = new Map();
 
-function popup(p) {
+function irA(estacion_id) {
+  const m = marcadores.get(estacion_id);
+  if (!m) return;
+  // Nunca se aleja: si el usuario ya se había acercado, se respeta su zoom.
+  mapa.setView(m.getLatLng(), Math.max(mapa.getZoom(), 14));
+  m.openPopup();
+}
+
+function popupRebalanceo(p) {
   const critica = p.saturacion !== null && p.saturacion >= 1;
   return `<h3>${p.clave_estacion} · ${p.nombre}</h3>
     <div style="color:#52514e;font-size:12px">${p.municipio}</div>
@@ -288,15 +581,95 @@ function popup(p) {
     </dl>`;
 }
 
-/* --------------------------------------------------------------------- carga */
+function popupDisponibilidad(d) {
+  return `<h3>${d.clave_estacion} · ${d.nombre}</h3>
+    <div style="color:#52514e;font-size:12px">${d.municipio}</div>
+    <div style="margin-top:7px;font-weight:600;color:${NIVEL_COLOR[d.nivel]}">
+      ${NIVEL_TEXTO[d.nivel]}</div>
+    <dl>
+      <dt>Bicis estimadas</dt><dd>${n1(d.bicis_estimadas)}</dd>
+      <dt>Sin bicis</dt><dd>${pct(d.probabilidad_sin_bicis)}</dd>
+      <dt>Capacidad</dt><dd>${d.capacidad_anclajes ?? "—"}</dd>
+    </dl>
+    <button class="sel" data-estacion="${d.estacion_id}">Ver el detalle de esta estación</button>`;
+}
+
+// El botón del popup se crea y se destruye con cada apertura, así que el manejador
+// se engancha una sola vez al contenedor del mapa.
+$("mapa").addEventListener("click", e => {
+  const b = e.target.closest("button.sel");
+  if (!b) return;
+  const id = +b.dataset.estacion;
+  const ficha = CATALOGO.get(id);
+  if (ficha) { $("estacion").value = etiquetaEstacion(ficha); consultarUna(); }
+});
+
+/* ════════════════════════════════════════════════════════ catálogo */
+
+const CATALOGO = new Map();     // estacion_id -> ficha
+const POR_ETIQUETA = new Map(); // "GDL-127 · Nombre" -> estacion_id
+
+const etiquetaEstacion = f => `${f.clave_estacion} · ${f.nombre}`;
+
+async function cargarCatalogo() {
+  const fichas = await pedir("/estaciones");
+  const lista = $("estaciones");
+  lista.innerHTML = "";
+  for (const f of fichas) {
+    CATALOGO.set(f.estacion_id, f);
+    POR_ETIQUETA.set(etiquetaEstacion(f), f.estacion_id);
+    const o = document.createElement("option");
+    o.value = etiquetaEstacion(f);
+    lista.appendChild(o);
+  }
+  return fichas;
+}
+
+function estacionElegida() {
+  const v = $("estacion").value.trim();
+  // Sin texto no hay estación elegida. Ojo: "".startsWith("") es true, así que sin
+  // esta guarda la búsqueda devolvería la primera estación del catálogo y la página
+  // mostraría una respuesta que el usuario nunca pidió.
+  if (!v) return null;
+  if (POR_ETIQUETA.has(v)) return POR_ETIQUETA.get(v);
+
+  // El usuario pudo escribir solo la clave o parte del nombre. Se prefiere lo que
+  // empieza igual antes que lo que apenas contiene el texto.
+  const b = v.toLowerCase();
+  let porDentro = null;
+  for (const [etq, id] of POR_ETIQUETA) {
+    const e = etq.toLowerCase();
+    if (e.startsWith(b)) return id;
+    if (porDentro === null && e.includes(b)) porDentro = id;
+  }
+  return porDentro;
+}
+
+/* ═══════════════════════════════════════════════════════ pestañas */
+
+let pestana = "rebalanceo";
+
+function cambiarPestana(cual) {
+  pestana = cual;
+  for (const t of ["rebalanceo", "disponibilidad"])
+    $("tab-" + t).setAttribute("aria-selected", String(t === cual));
+  $("panel-rebalanceo").classList.toggle("oculto", cual !== "rebalanceo");
+  $("panel-disponibilidad").classList.toggle("oculto", cual !== "disponibilidad");
+  $("campo-estacion").hidden = cual !== "disponibilidad";
+  ocultarError();
+  actualizar();
+}
+$("tab-rebalanceo").onclick = () => cambiarPestana("rebalanceo");
+$("tab-disponibilidad").onclick = () => cambiarPestana("disponibilidad");
+
+/* ═══════════════════════════════════════════════════════ consultas */
 
 function fechaElegida() {
-  // Se construye una fecha real con el día de la semana pedido, a partir de hoy.
-  const dia = +document.getElementById("dia").value;
-  const hora = +document.getElementById("hora").value;
+  const dia = +$("dia").value, hora = +$("hora").value;
   const d = new Date();
   d.setDate(d.getDate() + ((dia - ((d.getDay() + 6) % 7)) + 7) % 7);
   d.setHours(hora, 0, 0, 0);
+  if (d <= new Date()) d.setDate(d.getDate() + 7);
   const p = n => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(hora)}:00:00`;
 }
@@ -306,35 +679,48 @@ let cargando = false;
 async function actualizar() {
   if (cargando) return;
   cargando = true;
-  const boton = document.getElementById("recargar");
-  boton.disabled = true;
+  $("recargar").disabled = true;
   document.body.classList.add("cargando");
   const t0 = performance.now();
 
   try {
-    const fecha_hora = fechaElegida();
-    const datos = await pedir("/predecir/lote", {
-      method: "POST", body: JSON.stringify({ fecha_hora })
-    });
-
-    // Nunca asumimos la forma de la respuesta.
-    if (!datos || !Array.isArray(datos.predicciones))
-      throw { tipo: "respuesta", msg: "El servicio no devolvió una lista de predicciones." };
-
-    ocultarError();
-    pintar(datos);
-    document.getElementById("pie-tiempo").textContent =
-      `${datos.total} estaciones en ${Math.round(performance.now() - t0)} ms`;
+    if (pestana === "rebalanceo") {
+      const datos = await pedir("/predecir/lote", {
+        method: "POST", body: JSON.stringify({ fecha_hora: fechaElegida() }),
+      });
+      if (!datos || !Array.isArray(datos.predicciones))
+        throw { tipo: "respuesta", msg: "El servicio no devolvió una lista de predicciones." };
+      ocultarError();
+      pintarRebalanceo(datos);
+      $("pie-tiempo").textContent =
+        `${datos.total} estaciones en ${Math.round(performance.now() - t0)} ms`;
+    } else {
+      const datos = await pedir("/disponibilidad/lote", {
+        method: "POST",
+        body: JSON.stringify({ dia_semana: +$("dia").value, hora: +$("hora").value }),
+      });
+      if (!datos || !Array.isArray(datos.disponibilidades))
+        throw { tipo: "respuesta", msg: "El servicio no devolvió una lista de disponibilidades." };
+      ocultarError();
+      pintarDisponibilidad(datos);
+      $("pie-tiempo").textContent =
+        `${datos.total} estaciones en ${Math.round(performance.now() - t0)} ms`;
+      // Siempre: si no hay estación elegida, esta misma función pinta la invitación
+      // a elegir una. Dejar la tarjeta vacía se vería como un hueco sin explicación.
+      await consultarUna(false);
+    }
   } catch (err) {
     explicar(err, actualizar);
   } finally {
     cargando = false;
-    boton.disabled = false;
+    $("recargar").disabled = false;
     document.body.classList.remove("cargando");
   }
 }
 
-function pintar(datos) {
+/* ────────────────────────────────────────────── pintar: rebalanceo */
+
+function pintarRebalanceo(datos) {
   capa.clearLayers();
   marcadores.clear();
 
@@ -351,7 +737,7 @@ function pintar(datos) {
       fillOpacity: sinDeficit ? .35 : .9,
       color: critica ? CRITICO : "#ffffff",
       weight: critica ? 2.5 : (sinDeficit ? 0 : 1.2),
-    }).bindPopup(popup(p));
+    }).bindPopup(popupRebalanceo(p));
     m.addTo(capa);
     marcadores.set(p.estacion_id, m);
   }
@@ -359,13 +745,13 @@ function pintar(datos) {
   const totalDeficit = preds.reduce((a, p) => a + (p.deficit_bicis || 0), 0);
   const totalSalidas = preds.reduce((a, p) => a + (p.salidas_estimadas || 0), 0);
   const criticas = preds.filter(p => p.saturacion !== null && p.saturacion >= 1).length;
-  document.getElementById("kpi-estaciones").textContent = preds.length;
-  document.getElementById("kpi-deficit").textContent = n0(totalDeficit);
-  document.getElementById("kpi-criticas").textContent = criticas;
-  document.getElementById("kpi-salidas").textContent = n0(totalSalidas);
+  $("kpi-estaciones").textContent = preds.length;
+  $("kpi-deficit").textContent = n0(totalDeficit);
+  $("kpi-criticas").textContent = criticas;
+  $("kpi-salidas").textContent = n0(totalSalidas);
 
   const top = [...preds].sort((a, b) => b.deficit_bicis - a.deficit_bicis).slice(0, 15);
-  const tbody = document.getElementById("tabla");
+  const tbody = $("tabla");
   tbody.innerHTML = "";
   for (const p of top) {
     const critica = p.saturacion !== null && p.saturacion >= 1;
@@ -376,49 +762,160 @@ function pintar(datos) {
       (critica ? `<span class="etiqueta-critica">SE VACÍA</span>` : "") + `</td>` +
       `<td class="num">${n1(p.deficit_bicis)}</td>` +
       `<td class="num">${p.capacidad_anclajes ?? "—"}</td>`;
-    tr.onclick = () => {
-      const m = marcadores.get(p.estacion_id);
-      if (m) { mapa.setView(m.getLatLng(), 15); m.openPopup(); }
-    };
+    tr.onclick = () => irA(p.estacion_id);
     tbody.appendChild(tr);
   }
 
   const etiqueta = datos.modelo_tipo === "baseline_historico"
     ? "línea base histórica" : datos.modelo_tipo;
-  document.getElementById("pie-modelo").textContent =
-    `Modelo: ${etiqueta} v${datos.modelo_version}`;
+  $("pie-modelo").textContent = `Modelo de demanda: ${etiqueta} v${datos.modelo_version}`;
 }
 
-/* -------------------------------------------------------------------- inicio */
+/* ──────────────────────────────────────── pintar: disponibilidad */
 
-(function iniciar() {
-  const sel = document.getElementById("hora");
-  for (let h = 0; h < 24; h++) {
+function pintarDisponibilidad(datos) {
+  capa.clearLayers();
+  marcadores.clear();
+
+  const filas = datos.disponibilidades
+    .filter(d => typeof d.latitud === "number" && typeof d.longitud === "number");
+
+  for (const d of filas) {
+    const m = L.circleMarker([d.latitud, d.longitud], {
+      radius: Math.max(4, Math.min(18, 2.4 * Math.sqrt(d.bicis_estimadas + 1))),
+      fillColor: NIVEL_COLOR[d.nivel],
+      fillOpacity: d.nivel === "alta" ? .62 : .92,
+      color: "#ffffff",
+      weight: d.nivel === "baja" ? 1.8 : 1,
+    }).bindPopup(popupDisponibilidad(d));
+    m.addTo(capa);
+    marcadores.set(d.estacion_id, m);
+  }
+
+  // La tabla lista lo que el usuario busca: dónde SÍ va a encontrar bicicleta.
+  const mejores = [...filas]
+    .sort((a, b) => a.probabilidad_sin_bicis - b.probabilidad_sin_bicis
+                 || b.bicis_estimadas - a.bicis_estimadas)
+    .slice(0, 15);
+  const tbody = $("tabla-disp");
+  tbody.innerHTML = "";
+  for (const d of mejores) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td><span class="punto" style="background:${NIVEL_COLOR[d.nivel]}"></span>` +
+      `${d.clave_estacion}<br><span style="color:var(--tinta-3)">${d.nombre}</span></td>` +
+      `<td class="num">${n1(d.bicis_estimadas)}</td>` +
+      `<td class="num">${pct(d.probabilidad_sin_bicis)}</td>`;
+    tr.onclick = () => irA(d.estacion_id);
+    tbody.appendChild(tr);
+  }
+
+  $("disp-salvedad").innerHTML =
+    `<b>Cómo se calcula.</b> ${datos.advertencia}`;
+  $("pie-modelo").textContent =
+    `Modelo de disponibilidad: ${datos.modelo_tipo} v${datos.modelo_version} · ` +
+    `umbral ${datos.umbral}`;
+}
+
+/* ─────────────────────────── la respuesta para una estación concreta */
+
+async function consultarUna(marcarCarga = true) {
+  const id = estacionElegida();
+  if (id === null) {
+    $("disp-respuesta").innerHTML =
+      `<div class="respuesta"><div class="veredicto" style="font-size:14px;color:var(--tinta-2)">
+        Elige una estación para ver la respuesta</div>
+        <div class="est">Mientras tanto, el mapa muestra la ciudad completa en esa franja.</div>
+      </div>`;
+    return;
+  }
+  if (marcarCarga) document.body.classList.add("cargando");
+  try {
+    const d = await pedir("/disponibilidad", {
+      method: "POST",
+      body: JSON.stringify({ estacion_id: id, dia_semana: +$("dia").value, hora: +$("hora").value }),
+    });
+    ocultarError();
+    $("disp-respuesta").innerHTML = `
+      <div class="respuesta ${d.nivel}">
+        <div class="est">${d.clave_estacion} · ${d.nombre}</div>
+        <div class="veredicto">${d.hay_bicis ? "Sí vas a encontrar bicicleta"
+                                             : "Probablemente no encuentres"}</div>
+        <div class="cuando">${d.nombre_dia} ${String(d.hora).padStart(2, "0")}:00 ·
+          ${d.fecha_resuelta}</div>
+        <div style="font-size:12.5px;color:var(--tinta-2)">${d.mensaje}</div>
+        <div class="cifras">
+          <div class="c"><div class="v">${n1(d.bicis_estimadas)}</div>
+            <div class="l">bicicletas esperadas<br>de ${d.capacidad_anclajes ?? "—"} anclajes</div></div>
+          <div class="c"><div class="v">${pct(d.probabilidad_sin_bicis)}</div>
+            <div class="l">probabilidad de que<br>no quede ninguna</div></div>
+        </div>
+        <div class="barra"><i style="width:${Math.min(100, d.probabilidad_sin_bicis * 100)}%"></i></div>
+        <div class="umbral">La respuesta cambia a «probablemente no» por encima de
+          ${pct(d.umbral)}, el umbral que maximiza F1 sobre la clase minoritaria.</div>
+      </div>`;
+    irA(id);
+  } catch (err) {
+    explicar(err, () => consultarUna());
+  } finally {
+    if (marcarCarga) document.body.classList.remove("cargando");
+  }
+}
+
+/* ══════════════════════════════════════════════════════════ inicio */
+
+(async function iniciar() {
+  // El horario de servicio de MiBici. Fuera de este rango el modelo nunca vio datos y
+  // el API responde 422, así que la interfaz no ofrece horas que no se pueden pedir.
+  const sel = $("hora");
+  for (let h = HORA_MIN; h <= HORA_MAX; h++) {
     const o = document.createElement("option");
     o.value = h;
     o.textContent = String(h).padStart(2, "0") + ":00";
     if (h === 18) o.selected = true;
     sel.appendChild(o);
   }
-  // Si la página no se sirve desde el API, apunta a localhost por defecto.
+
   if (location.protocol === "file:" || location.port === "5500")
-    document.getElementById("api").selectedIndex = 1;
+    $("api").selectedIndex = 1;
+  pintarRed();
 
-  for (const id of ["dia", "hora", "api"])
-    document.getElementById(id).addEventListener("change", actualizar);
-  document.getElementById("recargar").addEventListener("click", actualizar);
+  for (const id of ["dia", "hora"])
+    $(id).addEventListener("change", actualizar);
+  $("api").addEventListener("change", () => { pintarRed(); arrancar(); });
+  $("recargar").addEventListener("click", actualizar);
+  $("estacion").addEventListener("change", () => consultarUna());
 
-  // Se consulta /salud antes de pedir nada: si el modelo entrenado no está cargado,
-  // el usuario tiene que saber que está viendo la línea base y no el modelo.
-  pedir("/salud")
-    .then(s => {
-      if (!s.modelo_cargado)
-        avisoModelo(`<b>Mostrando la línea base histórica.</b> ${s.detalle || ""}
-          Las cifras son promedios reales de los últimos 12 meses, no predicciones del modelo.`);
-    })
-    .catch(() => { /* si /salud falla, el error real se verá al pedir las predicciones */ })
-    .finally(actualizar);
+  await arrancar();
 })();
+
+async function arrancar() {
+  // Se consulta /salud antes que nada: si un modelo no está cargado, el usuario tiene
+  // que saberlo antes de leer un solo número.
+  let salud = null;
+  try {
+    salud = await pedir("/salud");
+  } catch (err) {
+    explicar(err, arrancar);
+  }
+
+  if (salud) {
+    ocultarModelo();
+    const avisos = [];
+    if (!salud.modelo_cargado)
+      avisos.push(`<b>Demanda: mostrando la línea base histórica.</b> ${salud.detalle || ""}`);
+    if (!salud.disponibilidad_cargada)
+      avisos.push(`<b>¿Habrá bici?: el modelo todavía no está cargado.</b> ` +
+                  `${salud.disponibilidad_detalle || ""}`);
+    if (avisos.length) avisoModelo(avisos.join("<br>"));
+
+    $("tab-disponibilidad").disabled = !salud.disponibilidad_cargada;
+    $("tab-disponibilidad").style.opacity = salud.disponibilidad_cargada ? "" : ".5";
+  }
+
+  try { if (!CATALOGO.size) await cargarCatalogo(); } catch { /* el mapa lo reportará */ }
+  await actualizar();
+}
 </script>
 </body>
 </html>
