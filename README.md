@@ -94,6 +94,65 @@ flowchart LR
 
 ---
 
+## Quién llama a quién
+
+Es la confusión más fácil de este montaje, y vale la pena deshacerla antes de seguir:
+**Render nunca habla con Databricks.** Si mañana se borrara el workspace de Databricks, el API
+seguiría respondiendo igual. Lo que hay son **dos momentos distintos** que se confunden en uno.
+
+**Momento 1 — una sola vez, al construir.**
+
+```mermaid
+flowchart LR
+  DB["Databricks<br/>seis notebooks"]
+  ART["Artefactos .joblib<br/>2.0 MB y 3.3 MB"]
+  REPO["Repositorio<br/>api/datos/"]
+  IMG["Render<br/>construye la imagen"]
+  CONT["Contenedor<br/>en Render"]
+  DB -->|"se descargan del Volume"| ART
+  ART -->|"git push"| REPO
+  REPO -->|"Render detecta el push"| IMG
+  IMG -->|"despliega"| CONT
+```
+
+**Momento 2 — en cada petición, milisegundos.**
+
+```mermaid
+flowchart LR
+  NAV["Navegador<br/>del mapa"]
+  GHA["GitHub Actions<br/>vigilancia"]
+  CLI["curl o /docs"]
+  CONT["Contenedor en Render<br/>los cuatro modelos ya en memoria"]
+  NAV -->|"HTTP"| CONT
+  GHA -->|"HTTP"| CONT
+  CLI -->|"HTTP"| CONT
+```
+
+**Al construir.** Databricks corre los notebooks y produce dos archivos `.joblib`. Esos archivos
+se descargan del Volume, se dejan en [`api/datos/`](api/datos/) y viajan en el repositorio. Render
+detecta el push, construye el `Dockerfile` y **mete los artefactos dentro de la imagen**. Ahí
+termina el papel de Databricks.
+
+**Al servir.** Cuando el contenedor arranca, FastAPI hace `joblib.load()` una sola vez y deja los
+cuatro modelos en memoria. De ahí en adelante, cada petición es una búsqueda en un diccionario más
+un `predict` de scikit-learn: **ninguna llamada de red hacia afuera**.
+
+Quien consulta el API son tres clientes, y Databricks no es ninguno de ellos:
+
+| Cliente | Qué pide |
+|---|---|
+| El navegador de quien abre el mapa | `/predecir/lote` y `/disponibilidad/lote` |
+| El flujo de GitHub Actions | `/salud` y una predicción real, para vigilarlo |
+| Cualquiera con `curl` o entrando a `/docs` | lo que quiera |
+
+**El modelo viaja como archivo, no como servicio.** Esa es la razón de fondo para haber entrenado
+con scikit-learn y no con Spark MLlib: un modelo de MLlib solo se carga desde Spark, así que
+servirlo obligaría a meter una JVM y Spark completo en el contenedor para responder una petición
+que tarda 50 milisegundos. Y de paso evita la dependencia: **el API no se cae cuando el workspace
+de Databricks se apaga.**
+
+---
+
 ## Los datos
 
 **Fuente:** [datos abiertos de MiBici](https://www.mibici.net/es/datos-abiertos/), publicados por el
