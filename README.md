@@ -25,6 +25,14 @@ Equipo: **César Roberto Murillo Figueroa** y **Andrés Muñoz Rubalcava**
 | **Documentación del API** (OpenAPI) | https://mibici-api-v8k6.onrender.com/docs |
 | **Estado del servicio** | https://mibici-api-v8k6.onrender.com/salud |
 
+> **Cómo comprobar que está vivo.** La aplicación lleva un panel arriba a la derecha que muestra
+> cada llamada al API y, al desplegarlo, la petición y la respuesta tal cual viajaron; además
+> `/salud` devuelve `servidor_hora` en UTC, para confirmar que la respuesta es de ese momento y no
+> de una caché. La insignia del encabezado no mira solo el código HTTP: comprueba que el modelo
+> esté cargado y pide una predicción real. Render duerme el servicio tras 15 minutos sin uso, así
+> que la primera visita puede tardar medio minuto.
+
+---
 
 ## El problema
 
