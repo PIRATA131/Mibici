@@ -25,46 +25,6 @@ Equipo: **César Roberto Murillo Figueroa** y **Andrés Muñoz Rubalcava**
 | **Documentación del API** (OpenAPI) | https://mibici-api-v8k6.onrender.com/docs |
 | **Estado del servicio** | https://mibici-api-v8k6.onrender.com/salud |
 
-### Compruébelo sin salir de la terminal
-
-```bash
-curl -s https://mibici-api-v8k6.onrender.com/salud
-```
-
-```bash
-curl -s -X POST https://mibici-api-v8k6.onrender.com/disponibilidad \
-  -H "Content-Type: application/json" \
-  -d '{"estacion_id":194,"dia_semana":4,"hora":18}'
-```
-
-`/salud` devuelve `servidor_hora` en UTC: sirve para confirmar que la respuesta se generó en ese
-momento y no salió de una caché.
-
-### Por qué la insignia de arriba importa
-
-Render duerme el servicio en su plan gratuito tras 15 minutos sin tráfico, y despertarlo tardaba
-**27 segundos** medidos. Un flujo de GitHub Actions
-([`.github/workflows/mantener-vivo.yml`](.github/workflows/mantener-vivo.yml)) lo consulta cada
-cinco minutos, así que la primera visita ya no espera.
-
-Ese mismo flujo hace de monitor, y por eso la insignia es información y no adorno. No se conforma
-con un 200: comprueba que `/salud` declare `estado: ok` **y** `modelo_cargado: true`, y después
-pide una predicción real. El API responde 200 igual cuando perdió el artefacto y está sirviendo la
-línea base — una degradación silenciosa que antes nadie habría notado. Si eso pasa, la insignia se
-pone roja.
-
-> **Lo que esto no garantiza.** Las ejecuciones programadas de GitHub son *mejor esfuerzo*: se
-> retrasan o se saltan cuando la plataforma está cargada, y más con intervalos cortos. Por eso cada
-> ejecución no consulta una sola vez, sino que se queda despierta unos minutos consultando de nuevo,
-> para que un disparo perdido no abra una ventana de 15 minutos sin tráfico. Aun así, la única
-> garantía real es abrir la página un par de minutos antes de necesitarla.
-
-> **La página lo enseña sola.** En la esquina superior derecha de la aplicación hay un panel que
-> muestra la ruta, el código HTTP, la latencia y hace cuánto se consultó. Al desplegarlo se ve la
-> petición y la respuesta tal cual viajaron, más la bitácora de las últimas llamadas. Un mapa
-> bonito es indistinguible de uno con los datos incrustados en el HTML; con ese panel abierto, no.
-
----
 
 ## El problema
 
