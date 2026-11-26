@@ -17,6 +17,8 @@ Equipo: **César Roberto Murillo Figueroa** y **Andrés Muñoz Rubalcava**
 
 ---
 
+---
+
 ## En vivo
 
 | | |
@@ -94,66 +96,96 @@ flowchart LR
 
 ---
 
-## Quién llama a quién
+## Cómo lo hicimos, paso a paso
 
-Es la confusión más fácil de este montaje, y vale la pena deshacerla antes de seguir:
-**Render nunca habla con Databricks.** Si mañana se borrara el workspace de Databricks, el API
-seguiría respondiendo igual. Lo que hay son **dos momentos distintos** que se confunden en uno.
+Esta sección cuenta el proyecto en orden y sin tecnicismos. Si solo vas a leer una parte del
+README, que sea esta: el resto son los detalles de cada paso.
 
-**Momento 1 — una sola vez, al construir.**
+**1 · Bajamos cuatro años de viajes.**
+MiBici publica cada mes un archivo con todos los viajes que hubo: de dónde salió la bicicleta, a
+qué hora, y dónde la dejaron. Descargamos 46 de esos archivos, de enero de 2023 a octubre de 2026.
+Juntos son **17,468,665 viajes** y pesan 1.39 GB.
 
-```mermaid
-flowchart LR
-  DB["Databricks<br/>seis notebooks"]
-  ART["Artefactos .joblib<br/>2.0 MB y 3.3 MB"]
-  REPO["Repositorio<br/>api/datos/"]
-  IMG["Render<br/>construye la imagen"]
-  CONT["Contenedor<br/>en Render"]
-  DB -->|"se descargan del Volume"| ART
-  ART -->|"git push"| REPO
-  REPO -->|"Render detecta el push"| IMG
-  IMG -->|"despliega"| CONT
-```
+**2 · Antes de tocarlos, los revisamos uno por uno.**
+No eran iguales entre sí. Unos traían la fecha escrita de una manera y otros de otra; algunos
+tenían los acentos rotos; había filas repetidas. Si los hubiéramos juntado sin revisar, el
+resultado habría salido mal **sin avisar**, que es la peor manera de salir mal.
 
-**Momento 2 — en cada petición, milisegundos.**
+**3 · Guardamos una copia intacta.**
+El primer paso del procesamiento no corrige nada. Copia los datos tal como llegaron, sin arreglar
+ni descartar una sola fila. La razón es práctica: si más adelante descubrimos que una de nuestras
+reglas estaba mal, podemos rehacer todo el trabajo sin volver a descargar nada.
 
-```mermaid
-flowchart LR
-  NAV["Navegador<br/>del mapa"]
-  GHA["GitHub Actions<br/>vigilancia"]
-  CLI["curl o /docs"]
-  CONT["Contenedor en Render<br/>los cuatro modelos ya en memoria"]
-  NAV -->|"HTTP"| CONT
-  GHA -->|"HTTP"| CONT
-  CLI -->|"HTTP"| CONT
-```
+**4 · Los limpiamos con reglas escritas.**
+Diez revisiones automáticas: viajes de menos de un minuto, viajes que terminan antes de empezar,
+edades imposibles, filas duplicadas. La decisión importante es que **nada se borra**. Un viaje
+sospechoso se marca como inválido y se anota en un registro aparte por qué lo es. Así cualquiera
+puede revisar después si fuimos demasiado estrictos. Quedaron 723,673 anotaciones y cero borrados.
 
-**Al construir.** Databricks corre los notebooks y produce dos archivos `.joblib`. Esos archivos
-se descargan del Volume, se dejan en [`api/datos/`](api/datos/) y viajan en el repositorio. Render
-detecta el push, construye el `Dockerfile` y **mete los artefactos dentro de la imagen**. Ahí
-termina el papel de Databricks.
+**5 · Los reorganizamos para poder hacerles preguntas.**
+Los datos venían como «una fila por viaje», y nosotros necesitábamos «una fila por estación y por
+hora». Es la diferencia entre tener una lista de todas las llamadas telefónicas del año y tener el
+resumen de cuántas llamadas hubo cada hora. De ahí salió una tabla de 9,582,726 renglones.
 
-**Al servir.** Cuando el contenedor arranca, FastAPI hace `joblib.load()` una sola vez y deja los
-cuatro modelos en memoria. De ahí en adelante, cada petición es una búsqueda en un diccionario más
-un `predict` de scikit-learn: **ninguna llamada de red hacia afuera**.
+**6 · Entrenamos el primer modelo: cuántas bicicletas se mueven.**
+Le mostramos al modelo dos años de historia para que aprendiera el patrón de cada estación a cada
+hora. Después lo pusimos a predecir dos meses que nunca había visto, y comparamos su resultado
+contra lo que haría cualquiera sin modelo: usar el promedio de las semanas anteriores.
 
-Quien consulta el API son tres clientes, y Databricks no es ninguno de ellos:
+**7 · Reconstruimos cuántas bicicletas hay en cada estación.**
+Aquí estaba el problema más interesante: **ese dato no existe**. MiBici publica los viajes, pero
+nunca dice cuántas bicicletas hay paradas en cada estación. Así que lo calculamos sumando y
+restando hora por hora —entran las que llegan, salen las que se van— sin dejar que el número baje
+de cero ni pase de los anclajes que físicamente tiene la estación.
 
-| Cliente | Qué pide |
+**8 · Entrenamos el segundo modelo: ¿habrá bicicleta cuando llegue?**
+Con esa reconstrucción entrenamos dos cosas a la vez: cuántas bicicletas esperar, y qué tan
+probable es que no quede ninguna. Las dos hacen falta, porque «en promedio hay 2 bicicletas» puede
+significar «casi siempre hay 2» o «la mitad de los días no hay ninguna».
+
+**9 · Lo publicamos en internet.**
+El modelo entrenado queda guardado en un archivo. Ese archivo viaja dentro del repositorio hasta
+un servidor que lo mantiene encendido, y encima pusimos una página con un mapa que le hace
+preguntas y dibuja las respuestas. Cualquiera con el enlace puede usarlo, sin instalar nada.
+
+### Dónde está cada paso
+
+| Paso | Qué produce | Archivo |
+|---|---|---|
+| 1 y 3 | La copia intacta de los viajes | [`01_bronze_ingesta.py`](Notebooks/01_bronze_ingesta.py) |
+| 2 | El diagnóstico previo | se resume en [Los datos](#los-datos) |
+| 4 | Los datos limpios y el registro de incidencias | [`02_silver_limpieza.py`](Notebooks/02_silver_limpieza.py) |
+| 5 | La tabla por estación y hora | [`03_gold_estrella.py`](Notebooks/03_gold_estrella.py) |
+| 6 | El primer modelo | [`04_modelo_demanda.py`](Notebooks/04_modelo_demanda.py) |
+| 7 | La ocupación reconstruida | [`05_gold_ocupacion.py`](Notebooks/05_gold_ocupacion.py) |
+| 8 | El segundo modelo | [`06_modelo_disponibilidad.py`](Notebooks/06_modelo_disponibilidad.py) |
+| 9 | El servicio y la página | [`api/`](api/) y [`web/index.html`](web/index.html) |
+
+---
+
+## Palabras que aparecen en este README
+
+Para que no haga falta ser programador para seguirlo.
+
+| Palabra | Qué quiere decir aquí |
 |---|---|
-| El navegador de quien abre el mapa | `/predecir/lote` y `/disponibilidad/lote` |
-| El flujo de GitHub Actions | `/salud` y una predicción real, para vigilarlo |
-| Cualquiera con `curl` o entrando a `/docs` | lo que quiera |
-
-**El modelo viaja como archivo, no como servicio.** Esa es la razón de fondo para haber entrenado
-con scikit-learn y no con Spark MLlib: un modelo de MLlib solo se carga desde Spark, así que
-servirlo obligaría a meter una JVM y Spark completo en el contenedor para responder una petición
-que tarda 50 milisegundos. Y de paso evita la dependencia: **el API no se cae cuando el workspace
-de Databricks se apaga.**
+| **Pipeline** | La cadena de pasos por la que pasan los datos, del archivo crudo al modelo |
+| **Bronze, Silver, Gold** | Los tres niveles de esa cadena: crudo, limpio y listo para usar |
+| **Spark** | Una herramienta para procesar datos que no caben cómodamente en una computadora normal |
+| **Databricks** | El servicio en la nube donde corrimos Spark |
+| **Modelo** | Un programa que aprendió de los datos pasados y con eso predice los futuros |
+| **Entrenar** | Mostrarle al modelo la historia para que encuentre los patrones |
+| **Línea base** | La regla simple contra la que se compara el modelo, para saber si de verdad aporta |
+| **API** | Una dirección de internet a la que se le hace una pregunta y devuelve una respuesta |
+| **Artefacto** | El modelo ya entrenado, guardado como un archivo que se puede mover |
+| **Contenedor** | Una caja con el programa y todo lo que necesita, para que funcione igual donde sea |
+| **Render** | El servicio donde vive esa caja, encendida y accesible desde internet |
 
 ---
 
 ## Los datos
+
+De dónde salió todo y qué tan sucio venía.
 
 **Fuente:** [datos abiertos de MiBici](https://www.mibici.net/es/datos-abiertos/), publicados por el
 Instituto de Movilidad y Transporte de Jalisco. Un CSV por mes más el catálogo de estaciones.
@@ -187,6 +219,8 @@ dos grupos por codificación.
 ---
 
 ## Las reglas de negocio
+
+Una regla de negocio es una condición que un dato tiene que cumplir para considerarse creíble: que un viaje dure más de un minuto, que la edad sea posible, que la fecha de fin no sea anterior a la de inicio.
 
 Siguen el estilo del taller RUES visto en clase. La regla que manda sobre todas las demás:
 **un registro inválido no se borra.** Se conserva con `registro_valido = false` y cada violación
@@ -241,6 +275,8 @@ lugar de descartar esos viajes, para que **ningún hecho quede huérfano de dime
 
 ## El esquema estrella
 
+Es la forma estándar de acomodar datos para analizarlos: una tabla central con los hechos —aquí, los viajes— rodeada de tablas que los describen, como el catálogo de estaciones y el calendario. Se llama estrella por la figura que forma el diagrama.
+
 ```mermaid
 erDiagram
   DIM_ESTACION ||--o{ FACT_VIAJES : "estacion"
@@ -288,6 +324,8 @@ de su propia vida útil**.
 ## El modelo 1 — demanda
 
 > Responde al **operador**: dónde mandar la camioneta.
+
+En corto: le damos al modelo una estación y una hora, y nos dice cuántas bicicletas espera que salgan y cuántas que lleguen. La resta de las dos es cuántas van a faltar.
 
 **Tarea: regresión.** Dos modelos, uno para salidas y otro para llegadas, porque el déficit es la
 diferencia entre ambos y una estación puede tener mucho movimiento y estar en equilibrio.
@@ -360,6 +398,8 @@ entrenamiento.
 ## El modelo 2 — disponibilidad
 
 > Responde al **usuario**: *«voy a esta estación el viernes a las 6, ¿va a haber bicicleta?»*
+
+Es el modelo que agregamos al final, y el que más trabajo costó — no por el algoritmo, sino porque el dato que necesitaba no existía.
 
 ### El obstáculo: los datos no traen el inventario
 
@@ -533,6 +573,8 @@ patrones opuestos, el mismo sistema.
 
 ## El API
 
+Un API es una dirección de internet a la que un programa —o una persona con el navegador— le manda una pregunta y recibe una respuesta. Es lo que convierte un modelo guardado en un archivo en algo que cualquiera puede usar.
+
 Expone los dos modelos como servicio consultable. FastAPI genera el esquema **OpenAPI** y la
 **validación de entradas** a partir de los modelos Pydantic, sin escribirlos a mano.
 
@@ -682,6 +724,65 @@ anclada a esa superficie, con cortes absolutos en bicicletas (no cuantiles), par
 signifique lo mismo al cambiar de hora. Las estaciones sin déficit se dibujan chicas y
 translúcidas: son contexto, no hallazgo. El rojo se reserva para las que se vacían por completo
 y **siempre va acompañado de la etiqueta `SE VACÍA`**, nunca solo como color.
+
+---
+
+## Quién llama a quién
+
+Es la confusión más fácil de este montaje, y vale la pena deshacerla antes de seguir:
+**Render nunca habla con Databricks.** Si mañana se borrara el workspace de Databricks, el API
+seguiría respondiendo igual. Lo que hay son **dos momentos distintos** que se confunden en uno.
+
+**Momento 1 — una sola vez, al construir.**
+
+```mermaid
+flowchart LR
+  DB["Databricks<br/>seis notebooks"]
+  ART["Artefactos .joblib<br/>2.0 MB y 3.3 MB"]
+  REPO["Repositorio<br/>api/datos/"]
+  IMG["Render<br/>construye la imagen"]
+  CONT["Contenedor<br/>en Render"]
+  DB -->|"se descargan del Volume"| ART
+  ART -->|"git push"| REPO
+  REPO -->|"Render detecta el push"| IMG
+  IMG -->|"despliega"| CONT
+```
+
+**Momento 2 — en cada petición, milisegundos.**
+
+```mermaid
+flowchart LR
+  NAV["Navegador<br/>del mapa"]
+  GHA["GitHub Actions<br/>vigilancia"]
+  CLI["curl o /docs"]
+  CONT["Contenedor en Render<br/>los cuatro modelos ya en memoria"]
+  NAV -->|"HTTP"| CONT
+  GHA -->|"HTTP"| CONT
+  CLI -->|"HTTP"| CONT
+```
+
+**Al construir.** Databricks corre los notebooks y produce dos archivos `.joblib`. Esos archivos
+se descargan del Volume, se dejan en [`api/datos/`](api/datos/) y viajan en el repositorio. Render
+detecta el push, construye el `Dockerfile` y **mete los artefactos dentro de la imagen**. Ahí
+termina el papel de Databricks.
+
+**Al servir.** Cuando el contenedor arranca, FastAPI hace `joblib.load()` una sola vez y deja los
+cuatro modelos en memoria. De ahí en adelante, cada petición es una búsqueda en un diccionario más
+un `predict` de scikit-learn: **ninguna llamada de red hacia afuera**.
+
+Quien consulta el API son tres clientes, y Databricks no es ninguno de ellos:
+
+| Cliente | Qué pide |
+|---|---|
+| El navegador de quien abre el mapa | `/predecir/lote` y `/disponibilidad/lote` |
+| El flujo de GitHub Actions | `/salud` y una predicción real, para vigilarlo |
+| Cualquiera con `curl` o entrando a `/docs` | lo que quiera |
+
+**El modelo viaja como archivo, no como servicio.** Esa es la razón de fondo para haber entrenado
+con scikit-learn y no con Spark MLlib: un modelo de MLlib solo se carga desde Spark, así que
+servirlo obligaría a meter una JVM y Spark completo en el contenedor para responder una petición
+que tarda 50 milisegundos. Y de paso evita la dependencia: **el API no se cae cuando el workspace
+de Databricks se apaga.**
 
 ---
 

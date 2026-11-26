@@ -183,6 +183,19 @@ tbody tr:hover{background:var(--surface-2)}
           background:var(--surface-2);font-size:11.5px;color:var(--tinta-2);line-height:1.5}
 .salvedad b{color:var(--tinta);font-weight:650}
 
+/* Ficha del modelo: apoyo para explicar en voz alta qué produjo cada número. */
+.ficha-modelo{margin-top:13px;padding:10px 12px;border:1px solid var(--borde);
+              border-left:3px solid var(--acento);border-radius:0 7px 7px 0;
+              background:var(--surface-2);font-size:11.5px;color:var(--tinta-2);line-height:1.55}
+.ficha-modelo .et{display:block;font-size:10px;font-weight:650;letter-spacing:.07em;
+                  text-transform:uppercase;color:var(--tinta-3);margin-bottom:5px}
+.ficha-modelo .alg{color:var(--tinta);font-weight:650;font-size:12.5px}
+.ficha-modelo ul{margin:5px 0 0;padding-left:15px}
+.ficha-modelo li{margin-bottom:2px}
+.ficha-modelo code{font-size:10.8px}
+.ficha-modelo .pie{display:block;margin-top:6px;padding-top:6px;
+                   border-top:1px solid var(--borde);color:var(--tinta-3);font-size:11px}
+
 .pie{padding:9px 18px;border-top:1px solid var(--borde);font-size:11.5px;color:var(--tinta-3);
      display:flex;gap:16px;flex-wrap:wrap;background:var(--surface-2)}
 code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
@@ -303,6 +316,18 @@ code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
         <div class="fila" style="margin-top:6px">El tamaño del círculo indica el movimiento total
           (salidas más llegadas).</div>
       </div>
+
+      <div class="ficha-modelo">
+        <span class="et">Modelo que hizo esta predicción</span>
+        <span class="alg">Gradient Boosting por histogramas</span> · scikit-learn
+        <ul>
+          <li><code>HistGradientBoostingRegressor</code> → salidas</li>
+          <li><code>HistGradientBoostingRegressor</code> → llegadas</li>
+        </ul>
+        <span class="pie">Entrenado con 4,791,477 filas, partición temporal ·
+          RMSE <b>1.883</b> bicicletas contra <b>1.911</b> de la línea base ·
+          <span id="ver-reb">—</span></span>
+      </div>
     </div>
 
     <!-- ───────────────────────────────────── disponibilidad -->
@@ -327,6 +352,18 @@ code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
           Baja — probablemente no quede ninguna</div>
         <div class="fila" style="margin-top:6px">El tamaño del círculo indica cuántas bicicletas
           se esperan ancladas.</div>
+      </div>
+
+      <div class="ficha-modelo">
+        <span class="et">Modelos que hicieron esta predicción</span>
+        <span class="alg">Gradient Boosting por histogramas</span> · scikit-learn
+        <ul>
+          <li><code>HistGradientBoostingRegressor</code> → cuántas bicicletas habrá</li>
+          <li><code>HistGradientBoostingClassifier</code> → probabilidad de que no quede ninguna</li>
+        </ul>
+        <span class="pie">Entrenado con 4,791,477 filas, partición temporal ·
+          AUC-PR <b>0.326</b> contra <b>0.199</b> de la línea base ·
+          <span id="ver-disp">—</span></span>
       </div>
 
       <div class="salvedad" id="disp-salvedad"></div>
@@ -769,6 +806,8 @@ function pintarRebalanceo(datos) {
   const etiqueta = datos.modelo_tipo === "baseline_historico"
     ? "línea base histórica" : datos.modelo_tipo;
   $("pie-modelo").textContent = `Modelo de demanda: ${etiqueta} v${datos.modelo_version}`;
+  // La ficha lateral declara el algoritmo; la versión la pone el propio servicio.
+  $("ver-reb").textContent = `versión ${datos.modelo_version}`;
 }
 
 /* ──────────────────────────────────────── pintar: disponibilidad */
@@ -815,6 +854,7 @@ function pintarDisponibilidad(datos) {
   $("pie-modelo").textContent =
     `Modelo de disponibilidad: ${datos.modelo_tipo} v${datos.modelo_version} · ` +
     `umbral ${datos.umbral}`;
+  $("ver-disp").textContent = `versión ${datos.modelo_version}, umbral ${datos.umbral}`;
 }
 
 /* ─────────────────────────── la respuesta para una estación concreta */

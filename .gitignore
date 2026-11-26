@@ -37,3 +37,6 @@ desktop.ini
 # La presentacion y el material de otras materias viven en la carpeta, no en el repo
 Rebalanceo de MiBici.pptx
 *.pdf
+
+# Configuracion local de herramientas, no del proyecto
+.claude/
