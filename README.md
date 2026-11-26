@@ -98,9 +98,6 @@ flowchart LR
 
 ## Cómo lo hicimos, paso a paso
 
-Esta sección cuenta el proyecto en orden y sin tecnicismos. Si solo vas a leer una parte del
-README, que sea esta: el resto son los detalles de cada paso.
-
 **1 · Bajamos cuatro años de viajes.**
 MiBici publica cada mes un archivo con todos los viajes que hubo: de dónde salió la bicicleta, a
 qué hora, y dónde la dejaron. Descargamos 46 de esos archivos, de enero de 2023 a octubre de 2026.
