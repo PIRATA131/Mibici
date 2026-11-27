@@ -162,8 +162,6 @@ preguntas y dibuja las respuestas. Cualquiera con el enlace puede usarlo, sin in
 
 ## Palabras que aparecen en este README
 
-Para que no haga falta ser programador para seguirlo.
-
 | Palabra | Qué quiere decir aquí |
 |---|---|
 | **Pipeline** | La cadena de pasos por la que pasan los datos, del archivo crudo al modelo |
